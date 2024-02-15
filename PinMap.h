@@ -1,0 +1,39 @@
+
+// wiring to CNCv3 board
+// Hardware used:  Pi Pico, Arduino Protoboard, 128x64 I2C OLED, DS3231 RTC, CNCv3 Stepper driver shield, 
+//   Encoder with switch, Bluetooth serial, LM7805 5 volt regulator, headers, wire.
+
+// GP 4 and 5 are I2C pins, in use.
+// GP 16,17,18,19 are SPI pins, saved.
+
+// Pi Pico is on an arduino UNO proto board.  CNCv3 plugs directly in to the headers.
+// On CNCv3 the Vin pin is not connected to anything, connect it to +12 volts after the fuse with a wire.
+// On proto board have 12v from CNCv3 on Vin to 5 volt regulator in, out 5 volts to PiPico Vsys.
+// PiPico 3.3 out to 3.3 power and to the I2C RTC and OLED screen.  SDA and SCL are wired as appropriate.
+// connect 3.3v to 5v on proto board to use 3.3 VDD on CNCv3
+//  ! revisit wiring if use TMC2130, power up issue will need isolation of 3.3 power
+//  ! in this case 3.3 to CNCv3 5v pin should come from 5 volt regulator only via diode drops
+//  ! and Vsys should be fed with a diode from 5 volt regulator to isolate from Vbus power.
+// The stepper drivers and motors draw a lot of current if the Vmotor drops as when power supply is current limiting
+// and do not recover if the current limit is increased. Add a 12 volt monitor via Analog input and
+// turn off the motor drivers if the 12 volts is not correct.
+// Wire 12v - 10k - 1k - GND voltage divider, junction of 10k/1k to A2
+
+//   Pi Pico GP Pin           Wire to arduino Proto Board Pin for CNCv3 connection
+
+#define RA_STEP 6            // D2
+#define RA_DIR  7            // D5
+#define DEC_STEP 8           // D3
+#define DEC_DIR  9           // D6
+#define FOCUS_STEP 2         // D4  wire if used
+#define FOCUS_DIR  3         // D7  wire if used
+
+#define DRV_ENABLE 10        // D8
+
+// constants
+#define RAreverse 0
+#define DECreverse 0
+
+// location
+float my_longitude = -69.524125;
+float my_latitude  = 44.44689;
