@@ -30,10 +30,18 @@
 
 #define DRV_ENABLE 10        // D8
 
+ // dummy motor for pointing model, set to sidereal, solar or lunar rate
+#define HA_STEP  11           // not wired anywhere
+#define HA_DIR   11
+
+#define ALT_AZ_DETECT  12     // to one of the aux pins on CNCv3, can use a jumper to switch eq or alt/az mode
+
+
 // constants
 #define RAreverse 0
 #define DECreverse 0
 
 // location
 float my_longitude = -69.524125;
-float my_latitude  = 44.44689;
+float my_latitude  = 44.447;
+//float my_latitude = 60.0;

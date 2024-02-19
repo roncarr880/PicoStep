@@ -33,6 +33,7 @@
   RPI_PICO_Timer ITimer0(0);
   AccelStepper RAstep(AccelStepper::DRIVER, RA_STEP, RA_DIR);    // pins step, direction
   AccelStepper DECstep(AccelStepper::DRIVER, DEC_STEP, DEC_DIR);
+  AccelStepper HAstep(AccelStepper::DRIVER, HA_STEP, HA_DIR);    // dummy motor
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -65,6 +66,13 @@ uint32_t sidereal_count;             // update sidereal time and display
 uint8_t power_fail;                  // latched error condition
 uint8_t tracking = STAR;             // !!! probably should start at HOME
 
+#define U_6STAR 0                // user modes, idle, display 6 database objects as they cross the meridian
+#define U_POINT 1                // pointing model on 3 lines, ra, ha, dec; stars on 3 lines
+#define U_RA    2                // alter RA with encoder, move scope
+#define U_DEC   3                // alter DEC with encoder, move scope
+#define U_GOTO  4                // select an object and goto with encoder
+uint8_t u_mode = U_POINT;        // !!! testing here with U_POINT as init value
+
 int new_target, old_target;          // testing vars currently
 
 
@@ -91,6 +99,8 @@ void setup() {
   DECstep.setAcceleration( 20.0 );
   DECstep.setMinPulseWidth( 3 );
   DECstep.setPinsInverted( DECreverse,0,0);
+  HAstep.setAcceleration( 20.0 );            // fake motor, do not enable output(s). using accelstepper to keep time.
+  HAstep.setMinPulseWidth( 3 );
 
   DECstep.enableOutputs();
   RAstep.enableOutputs();
@@ -102,13 +112,15 @@ void setup() {
   // doubled to 2000, timer at 0.5ms
   RAstep.setMaxSpeed( 2010.0 );    // need to be last in order to work at all?
   DECstep.setMaxSpeed( 2010.0 );
+  HAstep.setMaxSpeed( 2010.0 );    // !!! revisit
 
   // moveTo( position relative to zero starting position ) for goto's
   // move( relative to the current position );
   // setCurrentPosition( for fixups )
-  RAstep.moveTo( -1 );                 // checking if alive
-  DECstep.moveTo( 1 );                 // !!! should init to home position rather than zero
-  finding = 1;                         // flag goto in progress, need to reset sidereal speed when done
+  //RAstep.moveTo( -1 );                 // checking if alive
+  //DECstep.moveTo( 1 );                 // !!! should init to home position rather than zero
+  DECstep.setCurrentPosition( 5L * 60L * 90L );  // !!! init using the fake rate
+  finding = 1;                         // flag goto in progress, turns on sidereal rate
 
   ITimer0.attachInterruptInterval(500, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
 
@@ -124,19 +136,31 @@ bool TimerHandler0(struct repeating_timer *t){
   (void) t;
   static uint8_t toggle;
 
-  DECstep.run();   // !!! will need to use finding and setSpeed if using AltAz mount
+  //DECstep.run();   // !!! will need to use finding and setSpeed if using AltAz mount
 
   // a goto clears the constant speed setting, need to set it again after a goto
   // distanceToGo uses the old target, can't call it to see if need to call run or
   // runSpeed.  If run is called when not goto'ing it will try to move to the old target.
   // So need a flag ( finding ) to control what function to call.
+  // !!! what about time lost during a goto, need to catch up. 2nd find?, update finding target during find?
   if( finding ){
      RAstep.run();
-     if( RAstep.distanceToGo() == 0 ) RAstep.setSpeed(  0.71 ), finding = 0;
+     DECstep.run();
+     HAstep.run();
+     if( RAstep.distanceToGo() == 0 && DECstep.distanceToGo() == 0 && HAstep.distanceToGo() == 0 ){
+        RAstep.setSpeed(  SFACTOR1 /** 2.345*/);     // !!! need alt az conditional for RA DEC speed
+        HAstep.setSpeed(  SFACTOR1 );      // off,sidereal,solar,lunar
+        DECstep.setSpeed( 0.0 );
+        finding = 0;
+     }
   } 
-  else if( RAstep.runSpeed() ){
-    digitalWrite( 25, toggle );
-    toggle ^= 1;
+  else{
+    if( HAstep.runSpeed() ){
+       digitalWrite( 25, toggle );
+       toggle ^= 1;
+    }
+    RAstep.runSpeed();
+    DECstep.runSpeed();
   }
 
   return true;
@@ -168,8 +192,8 @@ uint32_t t;
    long ha = RAstep.currentPosition();
    long dec = DECstep.currentPosition();
    interrupts();
-   Serial.write('d'); Serial.print( dec );  Serial.write(' ');
-   Serial.write('h'); Serial.write('a'); Serial.print( ha ); Serial.write(' ');
+   //Serial.write('d'); Serial.print( dec );  Serial.write(' ');
+   //Serial.write('h'); Serial.write('a'); Serial.print( ha ); Serial.write(' ');
 
    // fake goto the current target
    if( new_target != old_target ){
@@ -185,6 +209,7 @@ uint32_t t;
       stp *= 5;                  // fake steps per 1 minute of dec
       
       noInterrupts();
+      HAstep.moveTo( 0 );
       RAstep.moveTo( 0 );        // just crossed the meridian
       DECstep.moveTo( stp );
       finding = 1;               // important to set the moving flag
@@ -232,6 +257,119 @@ void disp_status( uint8_t msg ){
    }
   
 }
+
+void disp_pointing(){      // where is the scope pointing !!! probably want to seperate out figuring and displaying
+long ra_p, dec_p, ha_p;    // or have an argument if want to display in small or medium numbers
+long dec_deg, dec_min;
+long ha_hr, ha_min, ha_sec;
+long ra_hr, ra_min;
+float ha_degrees, dec_degrees;
+
+   ha_p = RAstep.currentPosition();
+   dec_p = DECstep.currentPosition();
+
+   if( RAreverse ) ha_p = -ha_p;      // or does it report reversed when reversed?
+   if( DECreverse) dec_p = -dec_p;
+
+  // uint8_t sid_hr, sid_mn, sid_sec; current sidereal time
+  // factors needed 
+  // dec is hardcoded 5 * minutes for testing !!!
+  // ra/ha - with sidereal rate with no factor, just divide by 60 to get minute rate
+
+  dec_p /= 5;  
+  char sn = ' ';  if( dec_p < 0 ) sn = '-', dec_p = -dec_p;
+  dec_deg = dec_p/60;  dec_min = dec_p % 60;
+  dec_degrees = (float)dec_deg + (float)dec_min / 60.0;
+  //ha_p /= 60;   ha_hr = ha_p/60;   ha_min = ha_p % 60;
+  ha_hr = ha_p/3600;   ha_p -= ha_hr * 3600;
+  ha_min = ha_p / 60;  ha_p -= ha_min * 60;  ha_sec = ha_p;
+  ha_degrees = (float)ha_hr + (float)ha_min / 60.0 + (float)ha_sec / 3600.0 ;
+  ha_degrees *= 15.0;
+  ra_hr = sid_hr - ha_hr;   ra_min = sid_mn - ha_min;
+  if( ra_min < 0 ) ra_min += 60, --ra_hr;
+  if( ra_hr < 0 ) ra_hr += 24;
+
+  LCD.print((char *)"HA  : ", 0, ROW5 );
+  LCD.printNumI( ha_hr, 7*6, ROW5, 2, '0');
+  LCD.putch(' '); LCD.putch(':'); LCD.putch(' ');
+  LCD.printNumI( ha_min, 12*6, ROW5, 2, '0');
+
+  LCD.print((char *)"RA  : ", 0, ROW6 );
+  LCD.printNumI( ra_hr, 7*6, ROW6, 2, '0');
+  LCD.putch(' '); LCD.putch(':'); LCD.putch(' ');
+  LCD.printNumI( ra_min, 12*6, ROW6, 2, '0');
+
+  LCD.print((char *)"DEC : ",0,ROW7 );  LCD.putch(sn);
+  LCD.printNumI( dec_deg, 7*6, ROW7, 2, ' ');
+  LCD.print((char *)" deg ",9*6,ROW7 );
+  LCD.printNumI( dec_min, 15*6,ROW7,2,' ' );
+  LCD.putch('\'');
+  
+  if( sn == '-' ) dec_degrees = -dec_degrees;
+  find_alt_az( ha_degrees, dec_degrees );
+}
+
+
+void find_alt_az( float ha, float dec ){
+    //sin(ALT) = sin(DEC)*sin(LAT)+cos(DEC)*cos(LAT)*cos(HA)
+    // ALT = asin(ALT) 
+    //               sin(DEC) - sin(ALT)*sin(LAT)
+    // cos(A)   =   ---------------------------------
+    //               cos(ALT)*cos(LAT)
+    // A = acos(A)
+
+    // If sin(HA) is negative, then AZ = A, otherwise
+    // AZ = 360 - A
+
+    Serial.print("DEC  ");  Serial.print( dec );
+    Serial.print("  HA  "); Serial.print( ha );
+    Serial.print("  Lat "); Serial.println(my_latitude);
+float m_lat;
+float ALT, A;   
+
+    ha /= 57.3;   dec /= 57.3;  m_lat = my_latitude/57.3;
+    ALT = sin(dec) * sin(m_lat) + cos(dec) * cos(m_lat) * cos(ha);
+    ALT = constrain(ALT,-1.0,1.0);
+    ALT = asin(ALT);
+    A = (sin(dec) - sin(ALT) * sin(m_lat)) / ( cos(ALT) * cos(m_lat));
+    A = constrain(A,-1.0,1.0);
+    A = acos(A);
+
+    A *= 57.3;  ALT *= 57.3;
+    if( sin(ha) >= 0 ) A = 360 - A;
+    //if( A == NAN ){
+    //   dec *= 57.3;
+    //   A = ( dec < my_latitude ) ? 180 : 360;
+    //}
+
+    Serial.print( "Alt  " ); Serial.print( ALT ); 
+    Serial.print( "  Az "); Serial.println( A );
+
+    // lazy yoke calculation
+    // ha dec m_lat in radians
+
+    float TH, PHi, x, y, z, xp, yp, zp;
+
+    // change to rectangular coord
+    //TH = dec;  PHi = ha;
+    TH = 90.0/57.3 - dec;  PHi = -ha;
+    
+    x = sin(TH) * cos(PHi);
+    y = sin(TH) * sin(PHi);
+    z = cos(TH);
+    // rotate by latitude
+    xp = x * cos( m_lat ) + z * sin( m_lat );
+    yp = y;
+    zp = z * cos( m_lat ) - x * sin( m_lat );
+    // change back to polar coord
+    PHi = atan2(yp, xp);
+    TH = acos( zp );
+
+    Serial.print("DEC' "); Serial.print( 90.0 - TH * 57.3 );     // TH * 57.3 - 90
+    Serial.print("  HA' "); Serial.println( -PHi * 57.3 );
+
+}
+
 
 // start from date 2035/01/01 and known gmt sidereal time, find difference to todays date,
 // scale diff to sidereal seconds length, add/sub offset for longitude,
@@ -287,7 +425,8 @@ uint8_t h,m,s;
    LCD.printNumI(sid_sec,95,0,2,'0');
    LCD.setFont(SmallFont); 
 
-   display_stars();
+   if( u_mode < U_RA ) display_stars();
+   if( u_mode == U_POINT ) disp_pointing();
 }
 
 
@@ -310,6 +449,7 @@ int hr, mn;
       indx = i;
       // if( indx < 0 ) indx = NUMSTAR - 1;
       if( indx >= NUMSTAR ) indx = 0;
+      new_target = indx;    // !!! testing, goto on startup
    }
 
    // check if reached the next star
@@ -346,9 +486,11 @@ static char line7[25];
    LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );
    LCD.print( line3, 0, ROW3 );  LCD.clrRow(3,strlen(line3)*6 );
    LCD.print( line4, 0, ROW4 );  LCD.clrRow(4,strlen(line4)*6 );
-   LCD.print( line5, 0, ROW5 );  LCD.clrRow(5,strlen(line5)*6 );
-   LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
-   LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
+   if( u_mode == U_6STAR ){
+      LCD.print( line5, 0, ROW5 );  LCD.clrRow(5,strlen(line5)*6 );
+      LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
+      LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
+   }
   
 }
 
