@@ -1,12 +1,11 @@
-//  Pi Pico
-//  telescope goto and clock drive
+//  Pi Pico telescope goto and clock drive
 
 
 // Notes:
 // A minute of longitude vs a minute of declination
 //   A minute of declination is 1/60 of a degree.   0.016666666 deg/min
 //   A minute of longitude, an hour or 60 minutes is 15 deg.  0.25 deg/min
-// each second add 1.0027379 to sidereal time, or ( total delta seconds / 365.2425) * 366.2425
+// each second add 1.002737907 to sidereal time, or ( total delta seconds / 365.2425) * 366.2425
 // from OAT  #define SIDEREAL_SECONDS_PER_DAY 86164.0905f
 
 #include <Arduino.h>
@@ -40,8 +39,8 @@ extern unsigned char MediumNumbers[];
 extern unsigned char BigNumbers[];
 
 
-#define SFACTOR0 0.0027379           // sidereal  fast by this amount
-#define SFACTOR1 1.0027379
+#define SFACTOR0 0.002737907           // sidereal  fast by this amount
+#define SFACTOR1 1.002737907
 
 // status display, tracking mode
 #define POWER_FAIL 0
@@ -195,6 +194,7 @@ uint32_t t;
    //Serial.write('d'); Serial.print( dec );  Serial.write(' ');
    //Serial.write('h'); Serial.write('a'); Serial.print( ha ); Serial.write(' ');
 
+static int loops = 75;   // !!! test specific values of declination, test loops
    // fake goto the current target
    if( new_target != old_target ){
       old_target = new_target;
@@ -206,11 +206,15 @@ uint32_t t;
       stp += (long)bstar[new_target].dm;
       // long stp = abs( (long)bstar[new_target].dd ) * 60 + (long)bstar[new_target].dm;
       if( bstar[new_target].dd < 0 ) stp = -stp;
+  if( loops > -30 ){    
+     stp = loops * 60;
+     loops -= 15;
+  }    
       stp *= 5;                  // fake steps per 1 minute of dec
       
       noInterrupts();
-      HAstep.moveTo( 0 );
-      RAstep.moveTo( 0 );        // just crossed the meridian
+      HAstep.moveTo( 0 * 60 * 60 );        // h * 60 * 60
+      RAstep.moveTo( 0 * 60 * 60 );        // hour angle of test star, west positive here
       DECstep.moveTo( stp );
       finding = 1;               // important to set the moving flag
       interrupts();
@@ -279,15 +283,23 @@ float ha_degrees, dec_degrees;
   dec_p /= 5;  
   char sn = ' ';  if( dec_p < 0 ) sn = '-', dec_p = -dec_p;
   dec_deg = dec_p/60;  dec_min = dec_p % 60;
-  dec_degrees = (float)dec_deg + (float)dec_min / 60.0;
+  //dec_degrees = (float)dec_deg + (float)dec_min / 60.0;
+  dec_degrees = to_degrees_dec( dec_deg, dec_min, 0 );
   //ha_p /= 60;   ha_hr = ha_p/60;   ha_min = ha_p % 60;
   ha_hr = ha_p/3600;   ha_p -= ha_hr * 3600;
   ha_min = ha_p / 60;  ha_p -= ha_min * 60;  ha_sec = ha_p;
-  ha_degrees = (float)ha_hr + (float)ha_min / 60.0 + (float)ha_sec / 3600.0 ;
-  ha_degrees *= 15.0;
+  //ha_degrees = (float)ha_hr + (float)ha_min / 60.0 + (float)ha_sec / 3600.0 ;
+  //ha_degrees *= 15.0;
+  ha_degrees = to_degrees_ha( ha_hr, ha_min, ha_sec );
+  
   ra_hr = sid_hr - ha_hr;   ra_min = sid_mn - ha_min;
+  //ra_hr = ha_hr - sid_hr;   ra_min = ha_min - sid_mn;
+  
   if( ra_min < 0 ) ra_min += 60, --ra_hr;
   if( ra_hr < 0 ) ra_hr += 24;
+  if( ra_min > 59 ) ra_min -= 60, ++ra_hr;
+  if( ra_hr > 23 ) ra_hr -= 24;
+  // or ra_hr = ra_hr % 24;
 
   LCD.print((char *)"HA  : ", 0, ROW5 );
   LCD.printNumI( ha_hr, 7*6, ROW5, 2, '0');
@@ -320,39 +332,56 @@ void find_alt_az( float ha, float dec ){
 
     // If sin(HA) is negative, then AZ = A, otherwise
     // AZ = 360 - A
+    // azimuth rate = tan(ALT)*cos(A)*cos(LAT) - sin(LAT)
+    // altitude rate = -sin(A)*cos(LAT)
+    // field rotation = atan( sin(HA) / ( cos(DEC)*tan(LAT) - sin(DEC)*cos(HA) )
 
     Serial.print("DEC  ");  Serial.print( dec );
     Serial.print("  HA  "); Serial.print( ha );
     Serial.print("  Lat "); Serial.println(my_latitude);
+static float oldha;
+    float diffha = ha - oldha;
+    oldha = ha;
+    
 float m_lat;
-float ALT, A;   
+float ALT, A, AZ;   
 
-    ha /= 57.3;   dec /= 57.3;  m_lat = my_latitude/57.3;
+    ha /= 57.2958;   dec /= 57.2958;  m_lat = my_latitude/57.2958;
     ALT = sin(dec) * sin(m_lat) + cos(dec) * cos(m_lat) * cos(ha);
     ALT = constrain(ALT,-1.0,1.0);
     ALT = asin(ALT);
     A = (sin(dec) - sin(ALT) * sin(m_lat)) / ( cos(ALT) * cos(m_lat));
     A = constrain(A,-1.0,1.0);
-    A = acos(A);
+    AZ = acos(A);
+    float AZp = AZ;
 
-    A *= 57.3;  ALT *= 57.3;
-    if( sin(ha) >= 0 ) A = 360 - A;
+    AZ *= 57.2958;  ALT *= 57.2958;
+    if( sin(ha) >= 0 ) AZ = 360 - AZ;
     //if( A == NAN ){
-    //   dec *= 57.3;
+    //   dec *= 57.2958;
     //   A = ( dec < my_latitude ) ? 180 : 360;
     //}
 
+   float AZrate, ALTrate;
+
+    AZrate = tan(ALT/57.2958)*cos(AZp)*cos(m_lat) - sin(m_lat);
+    AZrate = -AZrate;                                          // !!! ok for all cases?
+    ALTrate = -sin(AZp)*cos(m_lat);
+    
     Serial.print( "Alt  " ); Serial.print( ALT ); 
-    Serial.print( "  Az "); Serial.println( A );
+    Serial.print( "  Az "); Serial.print( AZ );
+    Serial.print("  AltRate "); Serial.print( ALTrate,5 );
+    Serial.print("  AZrate ");  Serial.println( AZrate,5 );
 
     // lazy yoke calculation
     // ha dec m_lat in radians
 
     float TH, PHi, x, y, z, xp, yp, zp;
+ 
 
     // change to rectangular coord
     //TH = dec;  PHi = ha;
-    TH = 90.0/57.3 - dec;  PHi = -ha;
+    TH = 90.0/57.2958 - dec;  PHi = -ha;
     
     x = sin(TH) * cos(PHi);
     y = sin(TH) * sin(PHi);
@@ -365,8 +394,65 @@ float ALT, A;
     PHi = atan2(yp, xp);
     TH = acos( zp );
 
-    Serial.print("DEC' "); Serial.print( 90.0 - TH * 57.3 );     // TH * 57.3 - 90
-    Serial.print("  HA' "); Serial.println( -PHi * 57.3 );
+    float DECp_rate =  sin(-PHi) * sin( m_lat);
+
+    Serial.print("DEC' "); Serial.print( 90.0 - TH * 57.2958 );     // TH * 57.2958 - 90
+    Serial.print("  HA' "); Serial.print( -PHi * 57.2958 );
+    Serial.print("  DEC' rate ");  Serial.print( DECp_rate,5 );
+
+ float newPhi = -57.2958 * PHi; 
+ static  float oldPHi;
+ static float avrate;
+ float diffPHi = newPhi - oldPHi;
+     oldPHi = newPhi;
+ float oldavrate = avrate; 
+ 
+    if( diffha != 0.0 ){
+        //avrate = 1.0 * avrate + diffPHi/diffha;
+        //avrate /= 2.0;
+        avrate = diffPHi/diffha;
+    }
+    //avrate = constrain(avrate,-3.0,3.0);
+    Serial.print("  HaRate ");  Serial.print( avrate, 5 );
+
+    //float HAcalc = tan(90.0/57.2958 - TH )*cos(-PHi)*cos(m_lat) - sin(m_lat);   // -PHi ?
+    //float HAcalc = tan(dec)*cos(PHi)*cos(m_lat) - sin(m_lat);   // -PHi ?
+    //float HAcalc = tan(dec)*cos(-PHi)*cos(m_lat); // - sin(m_lat);   // -PHi ?
+    // float HAcalc = tan(90.0/57.2958 - TH)*cos(m_lat) - sin(m_lat);   //
+    // float HAcalc = tan(90.0/57.2958 - TH);  
+    // float HAcalc = sin(TH) * cos(m_lat) + sin(m_lat);
+    // float HAcalc = sin(TH) - sin(m_lat);
+    // float HAcalc = cos( 90/57.2958 - TH ) - cos(m_lat);
+    //COS(LAT) - tan(DEC')*sin(LAT)
+    float HAcalc = cos( m_lat) - tan( 90/57.2958 - TH) * sin(m_lat) * cos( PHi);  // cos(phi) guess
+    Serial.print("  Calc ");  Serial.println( HAcalc,5);
+     //Serial.println();
+   Serial.print( TH * 57.2958 );   Serial.write(' ');
+   Serial.print( 90 - TH * 57.2958 );   Serial.write(' ');
+   Serial.print( tan(TH) );   Serial.write(' ');
+   Serial.print( tan( 90/57.2958- TH) );   Serial.write(' ');
+   Serial.print( sin( m_lat) );   Serial.write(' ');
+   Serial.print( cos( m_lat) );   Serial.write(' ');
+   Serial.print( cos( TH ) );   Serial.write(' ');            // same1
+   Serial.print( cos( 90/57.2958 - TH) );   Serial.write(' ');   // same2
+   Serial.print( sin(TH) );   Serial.write(' ');              // same2
+   Serial.print( sin( 90/57.2958 - TH) );   Serial.write(' ');    // same1
+
+
+    Serial.println();
+ 
+    //Serial.println( cos(90/57.2958 - TH ) - sin(m_lat));
+    
+    // 4 * 60 = 240 seconds in 1 degree
+   // float newDEC = 90.0 - TH * 57.2958;
+   // static float oldDEC;
+
+   // float dec_rate = 4 * 60 * (newDEC - oldDEC);
+   // oldDEC = newDEC;
+   // Serial.print("   DEC rate "); Serial.print( dec_rate/5.0, 5);
+   // Serial.print("  sin(ha')sin(lat) ");  Serial.println( sin(-PHi) * sin( m_lat),5);
+
+    Serial.println();
 
 }
 
@@ -436,8 +522,9 @@ static int indx = 2555;
 int i;
 int hr, mn;
 
-   hr = sid_hr;  mn = sid_mn;
+   hr = sid_hr - 0;  mn = sid_mn;     // west negative here 
    if( hr > 23 ) hr -= 24;
+   if( hr < 0 ) hr += 24;
    // first time
    if( indx == 2555 ){
       for( i = 0; i < NUMSTAR; ++i ){
@@ -491,6 +578,23 @@ static char line7[25];
       LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
       LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
    }
+  
+}
+
+
+// conversions
+float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc ){
+float deg;
+
+   deg = (float)hr + (float)mn/60.0 + (float)sc/3600.0;
+   return 15.0 * deg;
+}
+
+float to_degrees_dec( int8_t dg, int8_t mn, int8_t sc ){
+float deg;
+
+   deg = (float)dg + (float)mn/60.0 + (float)sc/3600.0;
+   return deg;
   
 }
 

@@ -3,10 +3,10 @@
 
 struct BSTAR {
   char con[4];
-  uint8_t hr;
-  uint8_t mn;
+  int8_t hr;
+  int8_t mn;
   int8_t  dd;
-  uint8_t dm;
+  int8_t dm;
   char sname[16];
 };
 

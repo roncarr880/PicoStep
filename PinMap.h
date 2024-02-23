@@ -44,4 +44,4 @@
 // location
 float my_longitude = -69.524125;
 float my_latitude  = 44.447;
-//float my_latitude = 60.0;
+//float my_latitude = 30.0;
