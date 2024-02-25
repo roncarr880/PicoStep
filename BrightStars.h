@@ -1,6 +1,7 @@
 
 // SBO database
 
+// !!! add sidereal seconds and (declination seconds if desired)
 struct BSTAR {
   char con[4];
   int8_t hr;

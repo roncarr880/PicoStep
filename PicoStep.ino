@@ -72,8 +72,10 @@ uint8_t tracking = STAR;             // !!! probably should start at HOME
 #define U_GOTO  4                // select an object and goto with encoder
 uint8_t u_mode = U_POINT;        // !!! testing here with U_POINT as init value
 
-int new_target, old_target;          // testing vars currently
+int new_target, old_target;      // testing vars currently
+int meridian_star;               // database star/object crossing meridian
 
+#include "Pointing.h"            // more program code, 
 
 
 void setup() {
@@ -124,7 +126,10 @@ void setup() {
   ITimer0.attachInterruptInterval(500, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
 
   disp_status(STAR);                   // !!! starts with clock drive enabled, is this ok?
-  get_GMT_base();
+  get_GMT_base(SERIAL_DEBUG);
+  init_meridian_star();
+  display_stars2( meridian_star );
+   new_target = meridian_star;               // !!! just for testing maybe
   vtest_count = sidereal_count = millis();  
 
 }
@@ -180,21 +185,26 @@ uint32_t t;
 
    t = millis();
 
-   if( t - sidereal_count >= 5000 ) sidereal_count = t, get_GMT_base();
+   if( t - sidereal_count >= 5000 ){
+    sidereal_count = t, calc_pointing(0);    //get_GMT_base(SERIAL_DEBUG);
+    next_meridian_star();                    // keep track of meridian in star database
+   }
+   
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
  
    // t = encoder();
    // t = buttons();
 
 // testing
-   noInterrupts();
-   long ha = RAstep.currentPosition();
-   long dec = DECstep.currentPosition();
-   interrupts();
+//   noInterrupts();
+//   long ha = RAstep.currentPosition();
+//   long dec = DECstep.currentPosition();
+//   interrupts();
    //Serial.write('d'); Serial.print( dec );  Serial.write(' ');
    //Serial.write('h'); Serial.write('a'); Serial.print( ha ); Serial.write(' ');
 
-static int loops = 75;   // !!! test specific values of declination, test loops
+//static int loops = 30;   // !!! test specific values of declination, test loops
+
    // fake goto the current target
    if( new_target != old_target ){
       old_target = new_target;
@@ -206,10 +216,10 @@ static int loops = 75;   // !!! test specific values of declination, test loops
       stp += (long)bstar[new_target].dm;
       // long stp = abs( (long)bstar[new_target].dd ) * 60 + (long)bstar[new_target].dm;
       if( bstar[new_target].dd < 0 ) stp = -stp;
-  if( loops > -30 ){    
-     stp = loops * 60;
-     loops -= 15;
-  }    
+ // if( loops > -30 ){    
+ //    stp = loops * 60;
+ //    loops -= 15;
+ // }    
       stp *= 5;                  // fake steps per 1 minute of dec
       
       noInterrupts();
@@ -427,6 +437,7 @@ float ALT, A, AZ;
     float HAcalc = cos( m_lat) - tan( 90/57.2958 - TH) * sin(m_lat) * cos( PHi);  // cos(phi) guess
     Serial.print("  Calc ");  Serial.println( HAcalc,5);
      //Serial.println();
+     /*
    Serial.print( TH * 57.2958 );   Serial.write(' ');
    Serial.print( 90 - TH * 57.2958 );   Serial.write(' ');
    Serial.print( tan(TH) );   Serial.write(' ');
@@ -437,9 +448,9 @@ float ALT, A, AZ;
    Serial.print( cos( 90/57.2958 - TH) );   Serial.write(' ');   // same2
    Serial.print( sin(TH) );   Serial.write(' ');              // same2
    Serial.print( sin( 90/57.2958 - TH) );   Serial.write(' ');    // same1
+   */
 
-
-    Serial.println();
+    //Serial.println();
  
     //Serial.println( cos(90/57.2958 - TH ) - sin(m_lat));
     
@@ -460,34 +471,24 @@ float ALT, A, AZ;
 // start from date 2035/01/01 and known gmt sidereal time, find difference to todays date,
 // scale diff to sidereal seconds length, add/sub offset for longitude,
 // convert to a data/time and save the hours, minutes, seconds
-void get_GMT_base(){
+void get_GMT_base(int dbg){
 int64_t t1,t2,diff;
 uint8_t h,m,s;
+static uint8_t last_disp;
 
    GMT_eq = DateTime( 2035, 1, 1, 0, 0, 0 );
        
    // get the today info from the RTC which is using UTC time
    today = RTClib::now();
    h = today.hour();   m = today.minute();  s = today.second();
-   if( h < 10 ) Serial.write('0');
-   Serial.print( h ); Serial.write(':');
-   if( m < 10 ) Serial.write('0');
-   Serial.print( m ); Serial.write(':');
-   if( s < 10 ) Serial.write('0');
-   Serial.print( s ); Serial.print("  ");
-
 
    t1 = today.unixtime();   t2 = GMT_eq.unixtime();     // use 64 bit signed 
-   diff =  t1 - t2;   
-   
+   diff =  t1 - t2;      
    diff += (float)diff * SFACTOR0;
-   Serial.print("Base 2035/01/01 ");
-   Serial.print( diff );   Serial.write(' ');   
 
    GMT_eq = DateTime( 2035, 1, 1, 6, 41, 56 );  // gmt sidereal time 2035/1/1 at zero hours
    t2 = GMT_eq.unixtime();
-    
-   t2 += diff;        // add sidereal adjustment
+   t2 += diff;                                  // add sidereal adjustment
 
   // longitude adjustment
    t2 += my_longitude * 240.0;     // 86400/360;
@@ -495,108 +496,75 @@ uint8_t h,m,s;
    DateTime new_time = DateTime( (uint32_t)t2 );
    sid_hr = new_time.hour();   sid_mn = new_time.minute();  sid_sec = new_time.second();
 
-   Serial.print( new_time.year() );   Serial.write('/');
-   Serial.print( new_time.month() );  Serial.write('/');
-   Serial.print( new_time.day() );    Serial.write(' ');
+   if( dbg ){
+      if( h < 10 ) Serial.write('0');
+      Serial.print( h ); Serial.write(':');
+      if( m < 10 ) Serial.write('0');
+      Serial.print( m ); Serial.write(':');
+      if( s < 10 ) Serial.write('0');
+      Serial.print( s ); Serial.print("  ");
+      Serial.print("Base 2035/01/01 ");
+      Serial.print( diff );   Serial.write(' ');   
+      Serial.print( new_time.year() );   Serial.write('/');
+      Serial.print( new_time.month() );  Serial.write('/');
+      Serial.print( new_time.day() );    Serial.write(' ');
+      if( sid_hr < 10 ) Serial.write('0');
+      Serial.print( sid_hr );  Serial.write(':');
+      if( sid_mn < 10 ) Serial.write('0');
+      Serial.print( sid_mn );  Serial.write(':');
+      if( sid_sec < 10 ) Serial.write('0');
+      Serial.println( sid_sec );
+   }
 
-   LCD.setFont(MediumNumbers);
-   if( sid_hr < 10 ) Serial.write('0');
-   Serial.print( sid_hr );  Serial.write(':');
-   LCD.printNumI(sid_hr,35,0,2,'0');
-   if( sid_mn < 10 ) Serial.write('0');
-   Serial.print( sid_mn );  Serial.write(':');
-   LCD.printNumI(sid_mn,65,0,2,'0');
-   if( sid_sec < 10 ) Serial.write('0');
-   Serial.println( sid_sec );
-   LCD.printNumI(sid_sec,95,0,2,'0');
-   LCD.setFont(SmallFont); 
-
-   if( u_mode < U_RA ) display_stars();
+   if( last_disp != sid_sec ){             // display if new time
+      LCD.setFont(MediumNumbers);
+      LCD.printNumI(sid_hr,35,0,2,'0');
+      LCD.printNumI(sid_mn,65,0,2,'0');
+      LCD.printNumI(sid_sec,95,0,2,'0');
+      LCD.setFont(SmallFont);
+      last_disp = sid_sec;
+   }
+   //if( u_mode < U_RA ) next_meridian_star();    //display_stars();
    if( u_mode == U_POINT ) disp_pointing();
 }
 
 
-
-void display_stars( ){
-static int indx = 2555;
+void init_meridian_star(){    // find where we are when starting or starting a new goto search
 int i;
-int hr, mn;
 
-   hr = sid_hr - 0;  mn = sid_mn;     // west negative here 
-   if( hr > 23 ) hr -= 24;
-   if( hr < 0 ) hr += 24;
-   // first time
-   if( indx == 2555 ){
-      for( i = 0; i < NUMSTAR; ++i ){
-         if( bstar[i].hr > hr ) break;
-         if( bstar[i].hr == hr && bstar[i].mn > mn ) break;
-         display_stars2( i );
-         delay(10);
-      }
-      indx = i;
-      // if( indx < 0 ) indx = NUMSTAR - 1;
-      if( indx >= NUMSTAR ) indx = 0;
-      new_target = indx;    // !!! testing, goto on startup
-   }
+    for( i = 0; i < NUMSTAR; ++i ){
+       if( bstar[i].hr > sid_hr ) break;
+       if( bstar[i].hr == sid_hr && bstar[i].mn >= sid_mn ) break;
+    }
+    if( i >= NUMSTAR ) i = 0;
+    meridian_star = i;
+}
 
-   // check if reached the next star
-   if( hr == bstar[indx].hr && mn == bstar[indx].mn ){
-      display_stars2( indx );
-      new_target = indx;
-      ++indx;
-      if( indx >= NUMSTAR ) indx = 0;
+void next_meridian_star(){
+int next;
+
+   next = meridian_star + 1;
+   if( next >= NUMSTAR ) next = 0;
+   
+   if( sid_hr == bstar[next].hr && sid_mn == bstar[next].mn ){
+      if( u_mode < U_RA ) display_stars2( next );
+      meridian_star = new_target = next;
    }
- 
 }
 
 
 void display_stars2( int p ){
 static char line2[25];
-static char line3[25];
-static char line4[25];
-static char line5[25];
-static char line6[25];
-static char line7[25];
-
-   strcpy( line7, line6 );
-   strcpy( line6, line5 );
-   strcpy( line5, line4 );
-   strcpy( line4, line3 );
-   strcpy( line3, line2 );
 
    strcpy( line2,bstar[p].con );
    strcat( line2, " " );
    strncat( line2, bstar[p].sname,15 );
-   //strcat( line2, bstar[p].sname );
    line2[24] = 0;
    
-   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );
-   LCD.print( line3, 0, ROW3 );  LCD.clrRow(3,strlen(line3)*6 );
-   LCD.print( line4, 0, ROW4 );  LCD.clrRow(4,strlen(line4)*6 );
-   if( u_mode == U_6STAR ){
-      LCD.print( line5, 0, ROW5 );  LCD.clrRow(5,strlen(line5)*6 );
-      LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
-      LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
-   }
-  
+   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );  
 }
 
 
-// conversions
-float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc ){
-float deg;
-
-   deg = (float)hr + (float)mn/60.0 + (float)sc/3600.0;
-   return 15.0 * deg;
-}
-
-float to_degrees_dec( int8_t dg, int8_t mn, int8_t sc ){
-float deg;
-
-   deg = (float)dg + (float)mn/60.0 + (float)sc/3600.0;
-   return deg;
-  
-}
 
 /*****  extern I2C  functions needed by the OLED library  ******/
 uint8_t i2byte_count;       // avoid overfilling i2c buffer ( 32 size for pi pico ?, it is 256 it seems )
@@ -653,6 +621,70 @@ static char temp[45];
   strcat( temp, cnames );
   strncpy( cnames, temp, 18);  cnames[19] = 0;
   LCD.print( cnames, 0, ROW3 );
+  
+}
+
+
+void display_stars( ){
+static int indx = 2555;
+int i;
+int hr, mn;
+
+   hr = sid_hr - 0;  mn = sid_mn;     // west negative here 
+   if( hr > 23 ) hr -= 24;
+   if( hr < 0 ) hr += 24;
+   // first time
+   if( indx == 2555 ){
+      for( i = 0; i < NUMSTAR; ++i ){
+         if( bstar[i].hr > hr ) break;
+         if( bstar[i].hr == hr && bstar[i].mn > mn ) break;
+         display_stars2( i );
+         delay(10);
+      }
+      indx = i;
+      // if( indx < 0 ) indx = NUMSTAR - 1;
+      if( indx >= NUMSTAR ) indx = 0;
+      new_target = indx;    // !!! testing, goto on startup
+   }
+
+   // check if reached the next star
+   if( hr == bstar[indx].hr && mn == bstar[indx].mn ){
+      display_stars2( indx );
+      new_target = indx;
+      ++indx;
+      if( indx >= NUMSTAR ) indx = 0;
+   }
+ 
+}
+
+void display_stars2( int p ){
+static char line2[25];
+//static char line3[25];
+//static char line4[25];
+//static char line5[25];
+//static char line6[25];
+//static char line7[25];
+
+//   strcpy( line7, line6 );
+//   strcpy( line6, line5 );
+//   strcpy( line5, line4 );
+//   strcpy( line4, line3 );
+//   strcpy( line3, line2 );
+
+   strcpy( line2,bstar[p].con );
+   strcat( line2, " " );
+   strncat( line2, bstar[p].sname,15 );
+   //strcat( line2, bstar[p].sname );
+   line2[24] = 0;
+   
+   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );
+ //  LCD.print( line3, 0, ROW3 );  LCD.clrRow(3,strlen(line3)*6 );
+ //  LCD.print( line4, 0, ROW4 );  LCD.clrRow(4,strlen(line4)*6 );
+ //  if( u_mode == U_6STAR ){
+ //     LCD.print( line5, 0, ROW5 );  LCD.clrRow(5,strlen(line5)*6 );
+ //     LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
+ //     LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
+ //  }
   
 }
 
