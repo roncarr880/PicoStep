@@ -33,6 +33,7 @@
   AccelStepper RAstep(AccelStepper::DRIVER, RA_STEP, RA_DIR);    // pins step, direction
   AccelStepper DECstep(AccelStepper::DRIVER, DEC_STEP, DEC_DIR);
   AccelStepper HAstep(AccelStepper::DRIVER, HA_STEP, HA_DIR);    // dummy motor
+  AccelStepper DCstep(AccelStepper::DRIVER, DC_STEP, DC_DIR);    // dummy motor
 
 extern unsigned char SmallFont[];
 extern unsigned char MediumNumbers[];
@@ -65,14 +66,14 @@ uint32_t sidereal_count;             // update sidereal time and display
 uint8_t power_fail;                  // latched error condition
 uint8_t tracking = STAR;             // !!! probably should start at HOME
 
-#define U_6STAR 0                // user modes, idle, display 6 database objects as they cross the meridian
-#define U_POINT 1                // pointing model on 3 lines, ra, ha, dec; stars on 3 lines
+#define U_STAR  0                // user modes, idle, display meridian star
+#define U_POINT 1                // pointing model display
 #define U_RA    2                // alter RA with encoder, move scope
 #define U_DEC   3                // alter DEC with encoder, move scope
 #define U_GOTO  4                // select an object and goto with encoder
-uint8_t u_mode = U_POINT;        // !!! testing here with U_POINT as init value
+uint8_t u_mode = U_STAR;        
 
-int new_target, old_target;      // testing vars currently
+int new_target, old_target=400;      // testing vars currently
 int meridian_star;               // database star/object crossing meridian
 
 #include "Pointing.h"            // more program code, 
@@ -100,9 +101,11 @@ void setup() {
   DECstep.setAcceleration( 20.0 );
   DECstep.setMinPulseWidth( 3 );
   DECstep.setPinsInverted( DECreverse,0,0);
-  HAstep.setAcceleration( 20.0 );            // fake motor, do not enable output(s). using accelstepper to keep time.
-  HAstep.setMinPulseWidth( 3 );
-
+  HAstep.setAcceleration( 100.0 );            // fake motor, do not enable output(s). using accelstepper to
+  HAstep.setMinPulseWidth( 1 );
+  DCstep.setAcceleration( 100.0 );            // fake motor, do not enable output(s)
+  DCstep.setMinPulseWidth( 1 );
+  
   DECstep.enableOutputs();
   RAstep.enableOutputs();
   pinMode( DRV_ENABLE, OUTPUT );
@@ -114,6 +117,7 @@ void setup() {
   RAstep.setMaxSpeed( 2010.0 );    // need to be last in order to work at all?
   DECstep.setMaxSpeed( 2010.0 );
   HAstep.setMaxSpeed( 2010.0 );    // !!! revisit
+  DCstep.setMaxSpeed( 2010 ); 
 
   // moveTo( position relative to zero starting position ) for goto's
   // move( relative to the current position );
@@ -121,6 +125,8 @@ void setup() {
   //RAstep.moveTo( -1 );                 // checking if alive
   //DECstep.moveTo( 1 );                 // !!! should init to home position rather than zero
   DECstep.setCurrentPosition( 5L * 60L * 90L );  // !!! init using the fake rate
+  //telescope.DEC_ = 90.0;
+  DCstep.setCurrentPosition( 15L * 60L * 90L );
   finding = 1;                         // flag goto in progress, turns on sidereal rate
 
   ITimer0.attachInterruptInterval(500, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
@@ -129,7 +135,10 @@ void setup() {
   get_GMT_base(SERIAL_DEBUG);
   init_meridian_star();
   display_stars2( meridian_star );
+  calc_pointing( meridian_star, &target );          //!!! diff object for this?
+  display_pointing( &target );
    new_target = meridian_star;               // !!! just for testing maybe
+   
   vtest_count = sidereal_count = millis();  
 
 }
@@ -151,10 +160,13 @@ bool TimerHandler0(struct repeating_timer *t){
      RAstep.run();
      DECstep.run();
      HAstep.run();
-     if( RAstep.distanceToGo() == 0 && DECstep.distanceToGo() == 0 && HAstep.distanceToGo() == 0 ){
+     DCstep.run();
+     if( RAstep.distanceToGo() == 0 && DECstep.distanceToGo() == 0 && HAstep.distanceToGo() == 0  \
+       && DCstep.distanceToGo() == 0 ){
         RAstep.setSpeed(  SFACTOR1 /** 2.345*/);     // !!! need alt az conditional for RA DEC speed
         HAstep.setSpeed(  SFACTOR1 );      // off,sidereal,solar,lunar
-        DECstep.setSpeed( 0.0 );
+        DECstep.setSpeed( 0.0 );           // needs speed for alt az and alt alt
+        DCstep.setSpeed( 0.0 );
         finding = 0;
      }
   } 
@@ -165,6 +177,7 @@ bool TimerHandler0(struct repeating_timer *t){
     }
     RAstep.runSpeed();
     DECstep.runSpeed();
+   // DCstep.runSpeed();     // !!! should always be zero so not really needed I think
   }
 
   return true;
@@ -186,8 +199,10 @@ uint32_t t;
    t = millis();
 
    if( t - sidereal_count >= 5000 ){
-    sidereal_count = t, calc_pointing(0);    //get_GMT_base(SERIAL_DEBUG);
-    next_meridian_star();                    // keep track of meridian in star database
+     sidereal_count = t, calc_pointing( -1, &telescope); 
+     if( u_mode == U_POINT ) display_pointing( &telescope );
+     next_meridian_star();                    // keep track of meridian in star database
+     if( longseek && finding == 0 ) goto_target( &target );
    }
    
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
@@ -220,15 +235,20 @@ uint32_t t;
  //    stp = loops * 60;
  //    loops -= 15;
  // }    
-      stp *= 5;                  // fake steps per 1 minute of dec
+     // telescope.DEC_ = to_degrees_dec( bstar[new_target].dd, bstar[new_target].dm, 0 );
+     
+      //stp *= 5;                  // fake steps per 1 minute of dec
       
-      noInterrupts();
-      HAstep.moveTo( 0 * 60 * 60 );        // h * 60 * 60
-      RAstep.moveTo( 0 * 60 * 60 );        // hour angle of test star, west positive here
-      DECstep.moveTo( stp );
-      finding = 1;               // important to set the moving flag
-      interrupts();
+    //  noInterrupts();
+    //  HAstep.moveTo( 0 * 60 * 60 );        // h * 60 * 60
+    //  RAstep.moveTo( 0 * 60 * 60 );        // hour angle of test star, west positive here
+    //  DECstep.moveTo( 5 * stp );           // !!! fake steps per minute
+    //  DCstep.moveTo( 15 * stp );           // resolution same as 1 second of ha 
+    //  finding = 1;               // important to set the moving flag
+    //  interrupts();
+      goto_target( &target );
       Serial.println( stp );
+      u_mode = U_POINT;
    }
    
 }
@@ -272,7 +292,236 @@ void disp_status( uint8_t msg ){
   
 }
 
-void disp_pointing(){      // where is the scope pointing !!! probably want to seperate out figuring and displaying
+
+
+// start from date 2035/01/01 and known gmt sidereal time, find difference to todays date,
+// scale diff to sidereal seconds length, add/sub offset for longitude,
+// convert to a data/time and save the hours, minutes, seconds
+void get_GMT_base(int dbg){
+int64_t t1,t2,diff;
+uint8_t h,m,s;
+static uint8_t last_disp;
+
+   GMT_eq = DateTime( 2035, 1, 1, 0, 0, 0 );
+       
+   // get the today info from the RTC which is using UTC time
+   today = RTClib::now();
+   h = today.hour();   m = today.minute();  s = today.second();
+
+   t1 = today.unixtime();   t2 = GMT_eq.unixtime();     // use 64 bit signed 
+   diff =  t1 - t2;      
+   diff += (float)diff * SFACTOR0;
+
+   GMT_eq = DateTime( 2035, 1, 1, 6, 41, 56 );  // gmt sidereal time 2035/1/1 at zero hours
+   t2 = GMT_eq.unixtime();
+   t2 += diff;                                  // add sidereal adjustment
+
+  // longitude adjustment
+   t2 += my_longitude * 240.0;     // 86400/360;
+   
+   DateTime new_time = DateTime( (uint32_t)t2 );
+   sid_hr = new_time.hour();   sid_mn = new_time.minute();  sid_sec = new_time.second();
+
+   if( dbg ){
+      if( h < 10 ) Serial.write('0');
+      Serial.print( h ); Serial.write(':');
+      if( m < 10 ) Serial.write('0');
+      Serial.print( m ); Serial.write(':');
+      if( s < 10 ) Serial.write('0');
+      Serial.print( s ); Serial.print("  ");
+      Serial.print("Base 2035/01/01 ");
+      Serial.print( diff );   Serial.write(' ');   
+      Serial.print( new_time.year() );   Serial.write('/');
+      Serial.print( new_time.month() );  Serial.write('/');
+      Serial.print( new_time.day() );    Serial.write(' ');
+      if( sid_hr < 10 ) Serial.write('0');
+      Serial.print( sid_hr );  Serial.write(':');
+      if( sid_mn < 10 ) Serial.write('0');
+      Serial.print( sid_mn );  Serial.write(':');
+      if( sid_sec < 10 ) Serial.write('0');
+      Serial.println( sid_sec );
+   }
+
+   if( last_disp != sid_sec ){             // display if new time
+      LCD.setFont(MediumNumbers);
+      LCD.printNumI(sid_hr,35,0,2,'0');
+      LCD.printNumI(sid_mn,65,0,2,'0');
+      LCD.printNumI(sid_sec,95,0,2,'0');
+      LCD.setFont(SmallFont);
+      last_disp = sid_sec;
+   }
+   //if( u_mode < U_RA ) next_meridian_star();    //display_stars();
+   //if( u_mode == U_POINT ) disp_pointing();    // !!! remove 
+}
+
+
+void init_meridian_star(){    // find where we are when starting or starting a new goto search
+int i;
+
+    for( i = 0; i < NUMSTAR; ++i ){
+       if( bstar[i].hr > sid_hr ) break;
+       if( bstar[i].hr == sid_hr && bstar[i].mn >= sid_mn ) break;
+    }
+    if( i >= NUMSTAR ) i = 0;
+    meridian_star = i;
+}
+
+// keep track of objects on meridian and display info if in idle mode
+void next_meridian_star(){
+int next;
+
+   next = meridian_star + 1;
+   if( next >= NUMSTAR ) next = 0;
+   
+   if( sid_hr == bstar[next].hr && sid_mn == bstar[next].mn ){
+u_mode = U_STAR; // !!! testing    
+      meridian_star = new_target = next; 
+      if( u_mode == U_STAR ){
+        display_stars2( next );
+        calc_pointing( next, &target );          //!!! diff object for this?
+        display_pointing( &target );
+      }         
+   }
+}
+
+
+void display_stars2( int p ){
+static char line2[25];
+
+   strcpy( line2,bstar[p].con );
+   strcat( line2, " " );
+   strncat( line2, bstar[p].sname,15 );
+   line2[24] = 0;
+   
+   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );  
+}
+
+
+
+/*****  extern I2C  functions needed by the OLED library  ******/
+uint8_t i2byte_count;       // avoid overfilling i2c buffer ( 32 size for pi pico ?, it is 256 it seems )
+uint8_t i2adr_saved;
+
+void i2init(){
+  Wire.begin();
+  Wire.setClock(400000);
+}
+
+void i2start( uint8_t adr ){
+  Wire.beginTransmission(adr);
+  i2byte_count = 1;
+  i2adr_saved = adr;
+}
+
+
+void i2send( unsigned int data ){
+  if( ++i2byte_count == 253 ){
+     i2stop();
+     i2start( i2adr_saved ); 
+  }
+  Wire.write(data);
+}
+  
+
+void i2stop( ){
+  Wire.endTransmission();
+  i2byte_count = 0;
+}
+
+
+
+//********************************************saved old code **********************************************
+
+
+#ifdef NOWAY
+
+void display_stars2old( uint8_t p ){
+static char snames[20];
+static char cnames[20];
+static char temp[45];
+
+ // Serial.print( bstar[p].sname );  Serial.write(' ');
+
+  strncpy( temp,bstar[p].sname,6 );  temp[6] = 0;
+  strcat( temp, " " );
+  strcat( temp, snames );
+  strncpy( snames, temp, 18 );  snames[19] = 0;
+  LCD.print( snames, 0, ROW2 );
+
+  strncpy( temp, bstar[p].con,3 ); temp[3] = 0;
+  strcat( temp, " ");
+  strcat( temp, cnames );
+  strncpy( cnames, temp, 18);  cnames[19] = 0;
+  LCD.print( cnames, 0, ROW3 );
+  
+}
+
+
+void display_stars( ){
+static int indx = 2555;
+int i;
+int hr, mn;
+
+   hr = sid_hr - 0;  mn = sid_mn;     // west negative here 
+   if( hr > 23 ) hr -= 24;
+   if( hr < 0 ) hr += 24;
+   // first time
+   if( indx == 2555 ){
+      for( i = 0; i < NUMSTAR; ++i ){
+         if( bstar[i].hr > hr ) break;
+         if( bstar[i].hr == hr && bstar[i].mn > mn ) break;
+         display_stars2( i );
+         delay(10);
+      }
+      indx = i;
+      // if( indx < 0 ) indx = NUMSTAR - 1;
+      if( indx >= NUMSTAR ) indx = 0;
+      new_target = indx;    // !!! testing, goto on startup
+   }
+
+   // check if reached the next star
+   if( hr == bstar[indx].hr && mn == bstar[indx].mn ){
+      display_stars2( indx );
+      new_target = indx;
+      ++indx;
+      if( indx >= NUMSTAR ) indx = 0;
+   }
+ 
+}
+
+void display_stars2( int p ){
+static char line2[25];
+//static char line3[25];
+//static char line4[25];
+//static char line5[25];
+//static char line6[25];
+//static char line7[25];
+
+//   strcpy( line7, line6 );
+//   strcpy( line6, line5 );
+//   strcpy( line5, line4 );
+//   strcpy( line4, line3 );
+//   strcpy( line3, line2 );
+
+   strcpy( line2,bstar[p].con );
+   strcat( line2, " " );
+   strncat( line2, bstar[p].sname,15 );
+   //strcat( line2, bstar[p].sname );
+   line2[24] = 0;
+   
+   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );
+ //  LCD.print( line3, 0, ROW3 );  LCD.clrRow(3,strlen(line3)*6 );
+ //  LCD.print( line4, 0, ROW4 );  LCD.clrRow(4,strlen(line4)*6 );
+ //  if( u_mode == U_6STAR ){
+ //     LCD.print( line5, 0, ROW5 );  LCD.clrRow(5,strlen(line5)*6 );
+ //     LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
+ //     LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
+ //  }
+  
+}
+
+
+void disp_pointing(){      // where is the scope pointing 
 long ra_p, dec_p, ha_p;    // or have an argument if want to display in small or medium numbers
 long dec_deg, dec_min;
 long ha_hr, ha_min, ha_sec;
@@ -466,227 +715,5 @@ float ALT, A, AZ;
     Serial.println();
 
 }
-
-
-// start from date 2035/01/01 and known gmt sidereal time, find difference to todays date,
-// scale diff to sidereal seconds length, add/sub offset for longitude,
-// convert to a data/time and save the hours, minutes, seconds
-void get_GMT_base(int dbg){
-int64_t t1,t2,diff;
-uint8_t h,m,s;
-static uint8_t last_disp;
-
-   GMT_eq = DateTime( 2035, 1, 1, 0, 0, 0 );
-       
-   // get the today info from the RTC which is using UTC time
-   today = RTClib::now();
-   h = today.hour();   m = today.minute();  s = today.second();
-
-   t1 = today.unixtime();   t2 = GMT_eq.unixtime();     // use 64 bit signed 
-   diff =  t1 - t2;      
-   diff += (float)diff * SFACTOR0;
-
-   GMT_eq = DateTime( 2035, 1, 1, 6, 41, 56 );  // gmt sidereal time 2035/1/1 at zero hours
-   t2 = GMT_eq.unixtime();
-   t2 += diff;                                  // add sidereal adjustment
-
-  // longitude adjustment
-   t2 += my_longitude * 240.0;     // 86400/360;
-   
-   DateTime new_time = DateTime( (uint32_t)t2 );
-   sid_hr = new_time.hour();   sid_mn = new_time.minute();  sid_sec = new_time.second();
-
-   if( dbg ){
-      if( h < 10 ) Serial.write('0');
-      Serial.print( h ); Serial.write(':');
-      if( m < 10 ) Serial.write('0');
-      Serial.print( m ); Serial.write(':');
-      if( s < 10 ) Serial.write('0');
-      Serial.print( s ); Serial.print("  ");
-      Serial.print("Base 2035/01/01 ");
-      Serial.print( diff );   Serial.write(' ');   
-      Serial.print( new_time.year() );   Serial.write('/');
-      Serial.print( new_time.month() );  Serial.write('/');
-      Serial.print( new_time.day() );    Serial.write(' ');
-      if( sid_hr < 10 ) Serial.write('0');
-      Serial.print( sid_hr );  Serial.write(':');
-      if( sid_mn < 10 ) Serial.write('0');
-      Serial.print( sid_mn );  Serial.write(':');
-      if( sid_sec < 10 ) Serial.write('0');
-      Serial.println( sid_sec );
-   }
-
-   if( last_disp != sid_sec ){             // display if new time
-      LCD.setFont(MediumNumbers);
-      LCD.printNumI(sid_hr,35,0,2,'0');
-      LCD.printNumI(sid_mn,65,0,2,'0');
-      LCD.printNumI(sid_sec,95,0,2,'0');
-      LCD.setFont(SmallFont);
-      last_disp = sid_sec;
-   }
-   //if( u_mode < U_RA ) next_meridian_star();    //display_stars();
-   if( u_mode == U_POINT ) disp_pointing();
-}
-
-
-void init_meridian_star(){    // find where we are when starting or starting a new goto search
-int i;
-
-    for( i = 0; i < NUMSTAR; ++i ){
-       if( bstar[i].hr > sid_hr ) break;
-       if( bstar[i].hr == sid_hr && bstar[i].mn >= sid_mn ) break;
-    }
-    if( i >= NUMSTAR ) i = 0;
-    meridian_star = i;
-}
-
-void next_meridian_star(){
-int next;
-
-   next = meridian_star + 1;
-   if( next >= NUMSTAR ) next = 0;
-   
-   if( sid_hr == bstar[next].hr && sid_mn == bstar[next].mn ){
-      if( u_mode < U_RA ) display_stars2( next );
-      meridian_star = new_target = next;
-   }
-}
-
-
-void display_stars2( int p ){
-static char line2[25];
-
-   strcpy( line2,bstar[p].con );
-   strcat( line2, " " );
-   strncat( line2, bstar[p].sname,15 );
-   line2[24] = 0;
-   
-   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );  
-}
-
-
-
-/*****  extern I2C  functions needed by the OLED library  ******/
-uint8_t i2byte_count;       // avoid overfilling i2c buffer ( 32 size for pi pico ?, it is 256 it seems )
-uint8_t i2adr_saved;
-
-void i2init(){
-  Wire.begin();
-  Wire.setClock(400000);
-}
-
-void i2start( uint8_t adr ){
-  Wire.beginTransmission(adr);
-  i2byte_count = 1;
-  i2adr_saved = adr;
-}
-
-
-void i2send( unsigned int data ){
-  if( ++i2byte_count == 253 ){
-     i2stop();
-     i2start( i2adr_saved ); 
-  }
-  Wire.write(data);
-}
-  
-
-void i2stop( ){
-  Wire.endTransmission();
-  i2byte_count = 0;
-}
-
-
-
-//********************************************saved old code **********************************************
-
-
-#ifdef NOWAY
-
-void display_stars2old( uint8_t p ){
-static char snames[20];
-static char cnames[20];
-static char temp[45];
-
- // Serial.print( bstar[p].sname );  Serial.write(' ');
-
-  strncpy( temp,bstar[p].sname,6 );  temp[6] = 0;
-  strcat( temp, " " );
-  strcat( temp, snames );
-  strncpy( snames, temp, 18 );  snames[19] = 0;
-  LCD.print( snames, 0, ROW2 );
-
-  strncpy( temp, bstar[p].con,3 ); temp[3] = 0;
-  strcat( temp, " ");
-  strcat( temp, cnames );
-  strncpy( cnames, temp, 18);  cnames[19] = 0;
-  LCD.print( cnames, 0, ROW3 );
-  
-}
-
-
-void display_stars( ){
-static int indx = 2555;
-int i;
-int hr, mn;
-
-   hr = sid_hr - 0;  mn = sid_mn;     // west negative here 
-   if( hr > 23 ) hr -= 24;
-   if( hr < 0 ) hr += 24;
-   // first time
-   if( indx == 2555 ){
-      for( i = 0; i < NUMSTAR; ++i ){
-         if( bstar[i].hr > hr ) break;
-         if( bstar[i].hr == hr && bstar[i].mn > mn ) break;
-         display_stars2( i );
-         delay(10);
-      }
-      indx = i;
-      // if( indx < 0 ) indx = NUMSTAR - 1;
-      if( indx >= NUMSTAR ) indx = 0;
-      new_target = indx;    // !!! testing, goto on startup
-   }
-
-   // check if reached the next star
-   if( hr == bstar[indx].hr && mn == bstar[indx].mn ){
-      display_stars2( indx );
-      new_target = indx;
-      ++indx;
-      if( indx >= NUMSTAR ) indx = 0;
-   }
- 
-}
-
-void display_stars2( int p ){
-static char line2[25];
-//static char line3[25];
-//static char line4[25];
-//static char line5[25];
-//static char line6[25];
-//static char line7[25];
-
-//   strcpy( line7, line6 );
-//   strcpy( line6, line5 );
-//   strcpy( line5, line4 );
-//   strcpy( line4, line3 );
-//   strcpy( line3, line2 );
-
-   strcpy( line2,bstar[p].con );
-   strcat( line2, " " );
-   strncat( line2, bstar[p].sname,15 );
-   //strcat( line2, bstar[p].sname );
-   line2[24] = 0;
-   
-   LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );
- //  LCD.print( line3, 0, ROW3 );  LCD.clrRow(3,strlen(line3)*6 );
- //  LCD.print( line4, 0, ROW4 );  LCD.clrRow(4,strlen(line4)*6 );
- //  if( u_mode == U_6STAR ){
- //     LCD.print( line5, 0, ROW5 );  LCD.clrRow(5,strlen(line5)*6 );
- //     LCD.print( line6, 0, ROW6 );  LCD.clrRow(6,strlen(line6)*6 );
- //     LCD.print( line7, 0, ROW7 );  LCD.clrRow(7,strlen(line7)*6 );
- //  }
-  
-}
-
 
 #endif

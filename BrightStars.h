@@ -11,7 +11,7 @@ struct BSTAR {
   char sname[16];
 };
 
-// bright stars and now other objects
+// bright stars and other objects
 #define NUMSTAR 225
 const struct BSTAR bstar[NUMSTAR] = {
 {"And", 00, 39, + 30, 51,"delta And * "},

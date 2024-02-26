@@ -33,6 +33,8 @@
  // dummy motor for pointing model, set to sidereal, solar or lunar rate
 #define HA_STEP  11           // not wired anywhere
 #define HA_DIR   11
+#define DC_STEP  11
+#define DC_DIR   11
 
 #define ALT_AZ_DETECT  12     // to one of the aux pins on CNCv3, can use a jumper to switch eq or alt/az mode
 
