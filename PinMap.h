@@ -42,6 +42,10 @@
 // constants
 #define RAreverse 0
 #define DECreverse 0
+#define HA_STEPS_PER_DEGREE 3600L       // dummy stepper 1 sec of resolution
+#define DC_STEPS_PER_DEGREE 3600L
+#define DEC_STEPS_PER_DEGREE 2400L      // !!! made up numbers for now
+#define RA_STEPS_PER_DEGREE 2000L      // steps * micro steps * gearing / 360
 
 // location
 float my_longitude = -69.524125;

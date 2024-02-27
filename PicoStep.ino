@@ -4,9 +4,9 @@
 // Notes:
 // A minute of longitude vs a minute of declination
 //   A minute of declination is 1/60 of a degree.   0.016666666 deg/min
-//   A minute of longitude, an hour or 60 minutes is 15 deg.  0.25 deg/min
+//   A minute of longitude, (an hour or 60 minutes is 15 deg).  0.25 deg/min, factor of 15
 // each second add 1.002737907 to sidereal time, or ( total delta seconds / 365.2425) * 366.2425
-// from OAT  #define SIDEREAL_SECONDS_PER_DAY 86164.0905f
+
 
 #include <Arduino.h>
 #include "PinMap.h"
@@ -94,16 +94,16 @@ void setup() {
     
   pinMode( 25, OUTPUT );              // LED pin
 
-  RAstep.setAcceleration( 20.0 );
+  RAstep.setAcceleration( 500.0 );
   RAstep.setMinPulseWidth( 3 );
   //RAstep.setEnablePin( DRV_ENABLE );        // just control this pin without using the stepper library
   RAstep.setPinsInverted( RAreverse,0,0);     // direction, step , enable low
-  DECstep.setAcceleration( 20.0 );
+  DECstep.setAcceleration( 500.0 );
   DECstep.setMinPulseWidth( 3 );
   DECstep.setPinsInverted( DECreverse,0,0);
-  HAstep.setAcceleration( 100.0 );            // fake motor, do not enable output(s). using accelstepper to
+  HAstep.setAcceleration( 500.0 );            // fake motor, do not enable output(s). using accelstepper to
   HAstep.setMinPulseWidth( 1 );
-  DCstep.setAcceleration( 100.0 );            // fake motor, do not enable output(s)
+  DCstep.setAcceleration( 500.0 );            // fake motor, do not enable output(s)
   DCstep.setMinPulseWidth( 1 );
   
   DECstep.enableOutputs();
@@ -114,22 +114,23 @@ void setup() {
   // timer running at 1ms. Max speed will be timer limited at 1000.
   // step mode 16, 200 step motor  18.75 rpm max or 3.2 seconds for one rotation
   // doubled to 2000, timer at 0.5ms
-  RAstep.setMaxSpeed( 2010.0 );    // need to be last in order to work at all?
-  DECstep.setMaxSpeed( 2010.0 );
-  HAstep.setMaxSpeed( 2010.0 );    // !!! revisit
-  DCstep.setMaxSpeed( 2010 ); 
+  // double again to 0.25 ms, max 4000 steps/sec
+  RAstep.setMaxSpeed( 5010.0 );    // need to be last in order to work at all?
+  DECstep.setMaxSpeed( 5010.0 );
+  HAstep.setMaxSpeed( 5010.0 );    // !!! revisit
+  DCstep.setMaxSpeed( 5010 ); 
 
   // moveTo( position relative to zero starting position ) for goto's
   // move( relative to the current position );
   // setCurrentPosition( for fixups )
   //RAstep.moveTo( -1 );                 // checking if alive
   //DECstep.moveTo( 1 );                 // !!! should init to home position rather than zero
-  DECstep.setCurrentPosition( 5L * 60L * 90L );  // !!! init using the fake rate
+  DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );  // !!! init using the fake rate
   //telescope.DEC_ = 90.0;
-  DCstep.setCurrentPosition( 15L * 60L * 90L );
+  DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );
   finding = 1;                         // flag goto in progress, turns on sidereal rate
 
-  ITimer0.attachInterruptInterval(500, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
+  ITimer0.attachInterruptInterval(250, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
 
   disp_status(STAR);                   // !!! starts with clock drive enabled, is this ok?
   get_GMT_base(SERIAL_DEBUG);
@@ -148,6 +149,7 @@ void setup() {
 bool TimerHandler0(struct repeating_timer *t){
   (void) t;
   static uint8_t toggle;
+  static uint8_t count;
 
   //DECstep.run();   // !!! will need to use finding and setSpeed if using AltAz mount
 
@@ -163,17 +165,18 @@ bool TimerHandler0(struct repeating_timer *t){
      DCstep.run();
      if( RAstep.distanceToGo() == 0 && DECstep.distanceToGo() == 0 && HAstep.distanceToGo() == 0  \
        && DCstep.distanceToGo() == 0 ){
-        RAstep.setSpeed(  SFACTOR1 /** 2.345*/);     // !!! need alt az conditional for RA DEC speed
-        HAstep.setSpeed(  SFACTOR1 );      // off,sidereal,solar,lunar
+        RAstep.setSpeed(  SFACTOR1 * 15.0 * (float)RA_STEPS_PER_DEGREE / HA_STEPS_PER_DEGREE );  // !!!   
+        HAstep.setSpeed(  15.0*SFACTOR1 );      // off,sidereal,solar,lunar ( 3600/240 )
         DECstep.setSpeed( 0.0 );           // needs speed for alt az and alt alt
         DCstep.setSpeed( 0.0 );
         finding = 0;
      }
   } 
   else{
-    if( HAstep.runSpeed() ){
+    if( HAstep.runSpeed() && ++count == 15){
        digitalWrite( 25, toggle );
        toggle ^= 1;
+       count = 0;
     }
     RAstep.runSpeed();
     DECstep.runSpeed();
@@ -350,8 +353,6 @@ static uint8_t last_disp;
       LCD.setFont(SmallFont);
       last_disp = sid_sec;
    }
-   //if( u_mode < U_RA ) next_meridian_star();    //display_stars();
-   //if( u_mode == U_POINT ) disp_pointing();    // !!! remove 
 }
 
 

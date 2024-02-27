@@ -41,7 +41,7 @@ void calc_pointing( int obj, struct POINTING *p ){
 long ha_p, dc_p;
 float ha, dec, ra, sid;
 
-  // first update the sidereal time globals, can display clock also
+  // first update the sidereal time globals, which displays clock also
    get_GMT_base( SERIAL_DEBUG );
    
    if( obj < 0 ){                        // from dummy telescope, reflects actual when not seeking,
@@ -50,9 +50,8 @@ float ha, dec, ra, sid;
       //dec = p->DEC_;
       dc_p = DCstep.currentPosition();
       interrupts();
-      //if( RAreverse ) ha_p = -ha_p;     // don't think will be reversing the dummy scope
-      ha = 15.0 * (float)ha_p / 3600.0;
-      dec = (float)dc_p / (15.0 * 60.0);  // same resolution as 1 second of ha, 4 degree seconds, twice seeing
+      ha = (float)ha_p / (float)HA_STEPS_PER_DEGREE;
+      dec = (float)dc_p / (float)DC_STEPS_PER_DEGREE; 
       p->HA = ha;
       p->DEC_ = dec;
    }
@@ -153,13 +152,15 @@ static long tm;
 static struct POINTING *p2;
 float more_ha;
 
+   if( finding == 1 && longseek == 1 ) longseek = 0;       // re-seek
    if( longseek == 0 ){
        p2 = p;            // a hack to allow to seek twice
        tm = millis();
+       longseek = 1;
    }
    else{
        tm = (millis() - tm)/1000;
-       if( tm > 240 ){              // over 4 minutes old
+       if( tm > 900 ){              // over 4 minutes old 240
           longseek  = 0;
           return;
        }
@@ -170,10 +171,11 @@ float more_ha;
 
 long ha,ra,dc,dec;
 
-   ha = p2->HA * 3600.0/15.0;
-   ra = p2->HA * 3600.0/15.0;               // times some factor for stepper gearing
-   dc = 15.0 * 60.0 * p2->DEC_;
-   dec = 5.0 * 60.0 * p2->DEC_;        // !!! times something other than 5
+// !!! mount specific for alt az, GEM, alt alt
+   ha = p2->HA * (float)HA_STEPS_PER_DEGREE;
+   ra = p2->HA * (float)RA_STEPS_PER_DEGREE;
+   dc = p2->DEC_ * (float)DC_STEPS_PER_DEGREE;
+   dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE;
     
       noInterrupts();
       HAstep.moveTo( ha );       
@@ -211,7 +213,6 @@ char sn = ' ';
   LCD.print((char *)"Az  : ", 0, ROW4 );
   LCD.printNumF( p->AZ, 2, 7*6, ROW4, '.', 5 );
   
-
   LCD.print((char *)"HA  : ", 0, ROW5 );
   LCD.putch( sn );
   LCD.printNumI( ha_hr, 7*6, ROW5, 2, '0');
@@ -242,7 +243,9 @@ void serial_display_pointing(struct POINTING *p){    // debug
 
    Serial.print("DEC  ");  Serial.print( p->DEC_);
    Serial.print("  HA  "); Serial.print( p->HA );
-   Serial.print("  Side  ");  Serial.println( p->side );
+   Serial.print("  Side  ");  Serial.print( p->side );
+   Serial.print("  Find  "); Serial.print(finding);
+   Serial.print("  Long  "); Serial.println(longseek);
    Serial.print("Alt  "); Serial.print( p->ALT );
    Serial.print("  Az "); Serial.print( p->AZ );
    Serial.print("  AltRate "); Serial.print( p->ALT_rate,5 );
