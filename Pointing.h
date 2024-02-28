@@ -32,38 +32,17 @@ struct POINTING {
 };
 
 struct POINTING telescope;
-struct POINTING target;
+struct POINTING target;          // !!! kind of weak to have only one goto object, hardcoded in loop()
+struct POINTING SBO_object;      // !!! maybe an intevening function with a LIFO list on goto
+                                 // !!! and then could add meridian flip, target is then always the active
+                                 // !!! goto and loop() will be ok as is
+                                 
+// update a pointing struct
+void calc_pointing( struct POINTING *p ){   
+float ha, dec;   
 
-// update the pointing struct, from actual position, or position of a database object
-// actual position from the dummy stepper HAstep steps
-// arg obj -1 for actual position
-void calc_pointing( int obj, struct POINTING *p ){   
-long ha_p, dc_p;
-float ha, dec, ra, sid;
-
-  // first update the sidereal time globals, which displays clock also
-   get_GMT_base( SERIAL_DEBUG );
-   
-   if( obj < 0 ){                        // from dummy telescope, reflects actual when not seeking,
-      noInterrupts();                    // improvement would be to convert alt az back to ha,dec if 
-      ha_p =  HAstep.currentPosition();  // using an alt az mount
-      //dec = p->DEC_;
-      dc_p = DCstep.currentPosition();
-      interrupts();
-      ha = (float)ha_p / (float)HA_STEPS_PER_DEGREE;
-      dec = (float)dc_p / (float)DC_STEPS_PER_DEGREE; 
-      p->HA = ha;
-      p->DEC_ = dec;
-   }
-   else{                                 // get position from database object
-      dec = to_degrees_dec( bstar[obj].dd, bstar[obj].dm, 1 );
-      ra  = to_degrees_ha( bstar[obj].hr, bstar[obj].mn, 1 );     // !!! need seconds in bstar
-      sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
-      ha = sid - ra;                     // ra_hr = sid_hr - ha_hr;
-      p->HA = ha;
-      p->DEC_ = dec;
-   }
-
+   ha = p->HA;
+   dec = p->DEC_;
    // have ha and dec, calc all scopes
    
    // alt az scope
@@ -100,6 +79,7 @@ float AZrate, ALTrate;
     AZrate = tan(ALTp)*cos(AZp)*cos(m_lat) - sin(m_lat);
     AZrate = -AZrate;
     ALTrate = -sin(AZp)*cos(m_lat);
+    if( AZ < 180.0 ) ALTrate = -ALTrate;    // !!! correct for all cases?
     
     p->ALT = ALT;
     p->AZ  = AZ;
@@ -132,6 +112,44 @@ float TH, PHi, x, y, z, xp, yp, zp;
     if( SERIAL_DEBUG ) serial_display_pointing( p );
 }
 
+void calc_telescope( struct POINTING *p ){
+long ha_p, dc_p;
+float ha, dec;
+
+    // first update the sidereal time globals, which displays clock also
+   get_GMT_base( SERIAL_DEBUG );
+   
+   // from dummy telescope, reflects actual when not seeking,
+      noInterrupts();                    // improvement would be to convert alt az back to ha,dec if 
+      ha_p =  HAstep.currentPosition();  // using an alt az mount
+      dc_p = DCstep.currentPosition();
+      interrupts();
+      ha = (float)ha_p / (float)HA_STEPS_PER_DEGREE;
+      dec = (float)dc_p / (float)DC_STEPS_PER_DEGREE; 
+      p->HA = ha;
+      p->DEC_ = dec;
+
+
+   calc_pointing( p );
+}
+
+void calc_SBO_object( int obj, struct POINTING *p ){
+float dec, ra, ha, sid;
+
+   // first update the sidereal time globals, which displays clock also
+   get_GMT_base( SERIAL_DEBUG );
+   
+            // get position from database object
+      dec = to_degrees_dec( bstar[obj].dd, bstar[obj].dm, 1 );
+      ra  = to_degrees_ha( bstar[obj].hr, bstar[obj].mn, 1 );     // !!! need seconds in bstar
+      sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
+      ha = sid - ra;                     // ra_hr = sid_hr - ha_hr;
+      p->HA = ha;
+      p->DEC_ = dec;
+
+   calc_pointing( p );
+}
+
 // set speeds if tracking, from telescope 
 void set_speeds(){    // remember to disable interrupts, mount type specific
   
@@ -152,6 +170,8 @@ static long tm;
 static struct POINTING *p2;
 float more_ha;
 
+   // !!! would need to flip GEM about here or maybe after picking up millis()
+   // !!! or save this target and generate new ones for the flip
    if( finding == 1 && longseek == 1 ) longseek = 0;       // re-seek
    if( longseek == 0 ){
        p2 = p;            // a hack to allow to seek twice
@@ -160,13 +180,15 @@ float more_ha;
    }
    else{
        tm = (millis() - tm)/1000;
-       if( tm > 900 ){              // over 4 minutes old 240
+       if( tm > 300 ){              // over 4 minutes old (240)
           longseek  = 0;
           return;
        }
        more_ha = to_degrees_ha( 0, 0, tm );
        p2->HA += more_ha;
        longseek = 0;
+       // !!! do we need to re-calc the other positions here?, alt az etc
+       // or just assume it didn't move much on those, seems ALT could move alot if in zenith
    }
 
 long ha,ra,dc,dec;
@@ -180,7 +202,7 @@ long ha,ra,dc,dec;
       noInterrupts();
       HAstep.moveTo( ha );       
       RAstep.moveTo( ra );        // hour angle, west positive here
-      DECstep.moveTo( dec );           // !!! fake steps per minute
+      DECstep.moveTo( dec );
       DCstep.moveTo( dc );   
       finding = 1;               // important to set the moving flag
       interrupts();

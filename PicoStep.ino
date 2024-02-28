@@ -136,8 +136,8 @@ void setup() {
   get_GMT_base(SERIAL_DEBUG);
   init_meridian_star();
   display_stars2( meridian_star );
-  calc_pointing( meridian_star, &target );          //!!! diff object for this?
-  display_pointing( &target );
+  calc_SBO_object( meridian_star, &SBO_object );
+  display_pointing( &SBO_object );
    new_target = meridian_star;               // !!! just for testing maybe
    
   vtest_count = sidereal_count = millis();  
@@ -202,10 +202,10 @@ uint32_t t;
    t = millis();
 
    if( t - sidereal_count >= 5000 ){
-     sidereal_count = t, calc_pointing( -1, &telescope); 
+     sidereal_count = t, calc_telescope( &telescope); 
      if( u_mode == U_POINT ) display_pointing( &telescope );
      next_meridian_star();                    // keep track of meridian in star database
-     if( longseek && finding == 0 ) goto_target( &target );
+     if( longseek && finding == 0 ) goto_target( &target );   // 2nd seek for ha error from goto delay
    }
    
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
@@ -249,6 +249,7 @@ uint32_t t;
     //  DCstep.moveTo( 15 * stp );           // resolution same as 1 second of ha 
     //  finding = 1;               // important to set the moving flag
     //  interrupts();
+      calc_SBO_object( new_target, &target );
       goto_target( &target );
       Serial.println( stp );
       u_mode = U_POINT;
@@ -379,8 +380,8 @@ u_mode = U_STAR; // !!! testing
       meridian_star = new_target = next; 
       if( u_mode == U_STAR ){
         display_stars2( next );
-        calc_pointing( next, &target );          //!!! diff object for this?
-        display_pointing( &target );
+        calc_SBO_object( next, &SBO_object );          //!!! diff object for this?
+        display_pointing( &SBO_object );
       }         
    }
 }
