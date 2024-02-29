@@ -76,6 +76,13 @@ uint8_t u_mode = U_STAR;
 int new_target, old_target=400;      // testing vars currently
 int meridian_star;               // database star/object crossing meridian
 
+// speeds
+#define SIDEREAL SFACTOR1
+#define SOLAR 1.0
+#define LUNAR 0.979
+
+float HAspeed, RAspeed, DCspeed, DECspeed;
+
 #include "Pointing.h"            // more program code, 
 
 
@@ -138,7 +145,7 @@ void setup() {
   display_stars2( meridian_star );
   calc_SBO_object( meridian_star, &SBO_object );
   display_pointing( &SBO_object );
-   new_target = meridian_star;               // !!! just for testing maybe
+   new_target = meridian_star;               // !!! just for testing, does a goto
    
   vtest_count = sidereal_count = millis();  
 
@@ -165,10 +172,10 @@ bool TimerHandler0(struct repeating_timer *t){
      DCstep.run();
      if( RAstep.distanceToGo() == 0 && DECstep.distanceToGo() == 0 && HAstep.distanceToGo() == 0  \
        && DCstep.distanceToGo() == 0 ){
-        RAstep.setSpeed(  SFACTOR1 * 15.0 * (float)RA_STEPS_PER_DEGREE / HA_STEPS_PER_DEGREE );  // !!!   
-        HAstep.setSpeed(  15.0*SFACTOR1 );      // off,sidereal,solar,lunar ( 3600/240 )
-        DECstep.setSpeed( 0.0 );           // needs speed for alt az and alt alt
-        DCstep.setSpeed( 0.0 );
+        RAstep.setSpeed( RAspeed );  
+        HAstep.setSpeed( HAspeed );
+        DECstep.setSpeed( DECspeed );
+        //DCstep.setSpeed( DCspeed );    zero
         finding = 0;
      }
   } 
@@ -180,7 +187,7 @@ bool TimerHandler0(struct repeating_timer *t){
     }
     RAstep.runSpeed();
     DECstep.runSpeed();
-   // DCstep.runSpeed();     // !!! should always be zero so not really needed I think
+   // DCstep.runSpeed();     // should always be zero so not really needed I think
   }
 
   return true;
@@ -202,9 +209,11 @@ uint32_t t;
    t = millis();
 
    if( t - sidereal_count >= 5000 ){
-     sidereal_count = t, calc_telescope( &telescope); 
+     sidereal_count = t;
+     calc_telescope( &telescope);
+     if( longseek == 0 && finding == 0 ) set_speeds( );       // always uses telescope struct ? 
      if( u_mode == U_POINT ) display_pointing( &telescope );
-     next_meridian_star();                    // keep track of meridian in star database
+     next_meridian_star();                                    // keep track of meridian in star database
      if( longseek && finding == 0 ) goto_target( &target );   // 2nd seek for ha error from goto delay
    }
    

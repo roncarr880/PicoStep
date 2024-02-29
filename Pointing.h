@@ -79,7 +79,7 @@ float AZrate, ALTrate;
     AZrate = tan(ALTp)*cos(AZp)*cos(m_lat) - sin(m_lat);
     AZrate = -AZrate;
     ALTrate = -sin(AZp)*cos(m_lat);
-    if( AZ < 180.0 ) ALTrate = -ALTrate;    // !!! correct for all cases?
+    if( AZ < 180.0 ) ALTrate = -ALTrate;    // fixup,  correct for all cases?
     
     p->ALT = ALT;
     p->AZ  = AZ;
@@ -89,7 +89,7 @@ float AZrate, ALTrate;
     // alt alt lazy yoke mount
 float TH, PHi, x, y, z, xp, yp, zp;
  
-    // change to (rectangular) spherical coord
+    // change to rectangular coord
     //TH == dec;  PHi == ha;             // angles theta and phi
     TH = 90.0/R2D - dec;  PHi = -ha;
     
@@ -100,7 +100,7 @@ float TH, PHi, x, y, z, xp, yp, zp;
     xp = x * cos( m_lat ) + z * sin( m_lat );
     yp = y;
     zp = z * cos( m_lat ) - x * sin( m_lat );
-    // change back to polar coord
+    // change back to spherical coord
     PHi = atan2(yp, xp);
     TH = acos( zp );
     p->DECp = 90 - R2D * TH;
@@ -120,8 +120,8 @@ float ha, dec;
    get_GMT_base( SERIAL_DEBUG );
    
    // from dummy telescope, reflects actual when not seeking,
-      noInterrupts();                    // improvement would be to convert alt az back to ha,dec if 
-      ha_p =  HAstep.currentPosition();  // using an alt az mount
+      noInterrupts(); 
+      ha_p =  HAstep.currentPosition();
       dc_p = DCstep.currentPosition();
       interrupts();
       ha = (float)ha_p / (float)HA_STEPS_PER_DEGREE;
@@ -152,18 +152,53 @@ float dec, ra, ha, sid;
 
 // set speeds if tracking, from telescope 
 void set_speeds(){    // remember to disable interrupts, mount type specific
-  
+
+   switch( tracking ){
+     case POWER_FAIL:  case HOME:  case OFF:
+         HAspeed = RAspeed = DCspeed = DECspeed = 0.0;
+      break;
+      case STAR:
+         HAspeed = 15.0 * SIDEREAL;
+         DCspeed = 0.0;
+      break;
+      case SUN:
+         HAspeed = 15.0 * SOLAR;
+         DCspeed = 0.0;
+      break;
+      case MOON:
+         HAspeed = 15.0 * LUNAR;
+         DCspeed = 0.0;
+      break;
+   }
+   
+   switch( mount_type ){
+      case FORK:
+      case GEM:
+        RAspeed = HAspeed * (float)RA_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
+        DECspeed = 0.0;
+      break;
+      case ALTAZ:
+        RAspeed = HAspeed * telescope.AZ_rate * (float)RA_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
+        DECspeed = HAspeed * telescope.ALT_rate * (float)DEC_STEPS_PER_DEGREE / (float)DC_STEPS_PER_DEGREE;
+      break;
+      case ALTALT:
+        RAspeed = HAspeed * telescope.HAp_rate * (float)RA_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
+        DECspeed = HAspeed * telescope.DECp_rate * (float)DEC_STEPS_PER_DEGREE / (float)DC_STEPS_PER_DEGREE;
+      break;       
+   }
+
+   // !! use an error PID for alt az, alt alt ?  Is there a tracking problem to be fixed?
+
+   noInterrupts();
+      RAstep.setSpeed( RAspeed );   
+      HAstep.setSpeed( HAspeed );
+      DECstep.setSpeed( DECspeed );
+      //DCstep.setSpeed( DCspeed );      // always zero I think
+   interrupts();     
+     
 }
 
 
-// mount type specific, do a double goto if takes a while
-// goto from the star database
-void goto_star( int star ){
-
-  
-  
-}
-//OR
 // update HA after the first seek and seek again
 void goto_target( struct POINTING *p ){
 static long tm;
@@ -172,6 +207,10 @@ float more_ha;
 
    // !!! would need to flip GEM about here or maybe after picking up millis()
    // !!! or save this target and generate new ones for the flip
+   // !!! get current side from the telescope struct, ha positive is west view so east side
+   // !!! maybe side = 1 for east and -1 for west will work in all cases
+   // !!! think GEM has a 6 hour offset in HA, 90 degrees * STEPS_PER_DEGREE for number of steps
+   
    if( finding == 1 && longseek == 1 ) longseek = 0;       // re-seek
    if( longseek == 0 ){
        p2 = p;            // a hack to allow to seek twice
@@ -187,17 +226,35 @@ float more_ha;
        more_ha = to_degrees_ha( 0, 0, tm );
        p2->HA += more_ha;
        longseek = 0;
-       // !!! do we need to re-calc the other positions here?, alt az etc
-       // or just assume it didn't move much on those, seems ALT could move alot if in zenith
+       // re-calc the other positions, alt az etc
+       calc_pointing( p2 );
    }
 
 long ha,ra,dc,dec;
 
-// !!! mount specific for alt az, GEM, alt alt
+//  mount specific for alt az, GEM, alt alt
    ha = p2->HA * (float)HA_STEPS_PER_DEGREE;
-   ra = p2->HA * (float)RA_STEPS_PER_DEGREE;
    dc = p2->DEC_ * (float)DC_STEPS_PER_DEGREE;
-   dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE;
+
+   switch(mount_type){
+      case FORK:
+        ra = p2->HA * (float)RA_STEPS_PER_DEGREE;     // !!! all these mults can be outside case statement
+        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE; // !!! maybe not for GEM, see how that goes before changing
+      break;
+      case GEM:
+        ra = p2->HA * (float)RA_STEPS_PER_DEGREE;
+        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE;  //!!! dec is reversed for west 
+        //!!! add/sub the west/east offset for ra    
+      break;
+      case ALTAZ:
+        ra = p2->AZ * (float)RA_STEPS_PER_DEGREE;
+        dec = p2->ALT * (float)DEC_STEPS_PER_DEGREE;
+      break;
+      case ALTALT:
+        ra = p2->HAp * (float)RA_STEPS_PER_DEGREE;
+        dec = p2->DECp * (float)DEC_STEPS_PER_DEGREE;
+      break;  
+   }
     
       noInterrupts();
       HAstep.moveTo( ha );       

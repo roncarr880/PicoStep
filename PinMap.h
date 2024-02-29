@@ -36,8 +36,13 @@
 #define DC_STEP  11
 #define DC_DIR   11
 
-#define ALT_AZ_DETECT  12     // to one of the aux pins on CNCv3, can use a jumper to switch eq or alt/az mode
 
+// mount types 
+#define FORK 0
+#define GEM  1
+#define ALTAZ 2
+#define ALTALT 3
+uint8_t mount_type = ALTAZ;
 
 // constants
 #define RAreverse 0
