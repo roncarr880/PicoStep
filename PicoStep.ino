@@ -62,6 +62,7 @@ volatile uint8_t finding;            // goto started
 // jobs run on timers
 uint32_t vtest_count;                // test 12 volt power, turn all off if falls below 9 volts
 uint32_t sidereal_count;             // update sidereal time and display
+uint32_t finding_count;
 
 uint8_t power_fail;                  // latched error condition
 uint8_t tracking = STAR;             // !!! probably should start at HOME
@@ -132,14 +133,19 @@ void setup() {
   // setCurrentPosition( for fixups )
   //RAstep.moveTo( -1 );                 // checking if alive
   //DECstep.moveTo( 1 );                 // !!! should init to home position rather than zero
-  DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );  // !!! init using the fake rate
+    // !!! init using the fake rate
   //telescope.DEC_ = 90.0;
-  DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );
+  // !!! should be calling the at home function here !!!
+  DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );       // at 90 degree
   if( mount_type == GEM ){
      telescope.side = SIDE_EAST;
-       RAstep.setCurrentPosition( RA_STEPS_PER_DEGREE * 90L );
-       HAstep.setCurrentPosition( HA_STEPS_PER_DEGREE * 90L );
+     //RAstep.setCurrentPosition( RA_STEPS_PER_DEGREE * 90L );
+     //HAstep.setCurrentPosition( HA_STEPS_PER_DEGREE * 90L );
+     // start at zero HA and mount disconnected from RA
+     // mount points 90 deg in dec and that is the zero step position
   }
+  else DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );
+  
   calc_telescope( &telescope);
   
   finding = 1;                         // !!! ?? flag goto in progress, turns on sidereal rate
@@ -154,7 +160,7 @@ void setup() {
   display_pointing( &SBO_object );
    new_target = meridian_star;               // !!! just for testing, does a goto
    
-  vtest_count = sidereal_count = millis();  
+  finding_count = vtest_count = sidereal_count = millis();
 
 }
 
@@ -218,13 +224,18 @@ uint32_t t;
    if( t - sidereal_count >= 5000 ){
      sidereal_count = t;
      calc_telescope( &telescope);
-     if( longseek == 0 && finding == 0 ) set_speeds( );       // always uses telescope struct ? 
+     if( finding == 0 ) set_speeds( );       // always uses telescope struct ? 
      if( u_mode == U_POINT ) display_pointing( &telescope );
      next_meridian_star();                                    // keep track of meridian in star database
-     if( longseek && finding == 0 ) goto_target( &target );   // 2nd seek for ha error from goto delay
-     if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
+     //if( longseek && finding == 0 ) goto_target( &target );   // 2nd seek for ha error from goto delay
+     //if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
    }
 
+   if( t - finding_count >= 900 ){              // !!! pick an interval, this is slow for printing
+      finding_count = t;
+      que_goto( 0 );
+      if( flipping ) meridian_flip( 0.0,0.0 );
+   }
    // these could be here I think, above is extra 5 seconds but serial log shows what happens
    //if( longseek && finding == 0 ) goto_target( &target );  // 2nd seek for ha error from goto delay
    //if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
@@ -271,13 +282,82 @@ uint32_t t;
     //  finding = 1;               // important to set the moving flag
     //  interrupts();
       calc_SBO_object( new_target, &target );
-      goto_target( &target );
+      que_goto( &target );
       Serial.println( stp );
       u_mode = U_POINT;
    }
    
 }
 
+
+int meridian_flip( float dest_ha, float dest_dec ){
+static uint8_t state;
+
+    switch( state ){
+       case 0:
+         if( dest_ha >= 0.0 && telescope.side == SIDE_EAST ) ;   // ok
+         else if( dest_ha < 0.0 && dest_dec > 0.0 && telescope.side == SIDE_WEST ) ;  //ok
+         else if( dest_ha < 0.0 && dest_dec <= 0.0 && telescope.side == SIDE_EAST ) ;  // ok special south east 
+         else ++state, flipping = 1;
+       break;
+       case 1:
+         go_home_GEM();
+         ++state;
+       break;
+       case 2:
+         if( finding == 0 ) ++state;
+       break;
+       case 3:
+         telescope.side = ( telescope.side == SIDE_EAST ) ? SIDE_WEST : SIDE_EAST;
+         flipping = 0;
+         state = 0;
+       break;
+    }
+
+    return state;
+}
+
+void que_goto( struct POINTING *p ){
+static uint8_t state;
+static struct POINTING *p2;
+static uint32_t tm;
+float more_ha;
+
+   if( state == 0 && p == 0 ) return;
+   if( p != 0 ) state = 0;                // re-queue when goto is active ? or comment this out
+
+   switch( state ){
+      case 0:              // que the goto
+        if( p ){
+          state = ( mount_type == GEM ) ? 1 : 3;
+          p2 = p;
+          tm = millis();
+        }
+      break;
+      case 1:              // meridian flip needed?
+         state = ( meridian_flip( p2->HA, p2->DEC_ ) == 0 ) ? 3 : 2;
+      break;
+      case 2:              // wait for flip complete
+          if( flipping == 0 ) ++state;
+      break;
+      case 3:              // do goto
+        goto_target( p2 ), ++state;
+      break;
+      case 4:              // wait for done
+        if( finding == 0 ) ++state;
+      break;
+      case 5:              // 2nd find for HA delay, meridian flip delay
+         tm = (millis() - tm)/1000;
+         more_ha = to_degrees_ha( 0, 0, tm );
+         p2->HA += more_ha;
+         calc_pointing( p2 );  // re-calc the other positions, alt az etc
+         goto_target( p2 );
+         state = 0;
+      break;                
+   }
+
+  Serial.print(state); Serial.write(' ');
+}
 
 // check power supply, if voltage sags the current is not controlled, fatal error
 // let rest of program run, steppers should be stopped with no current

@@ -16,7 +16,7 @@ float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc );
 void serial_display_pointing(struct POINTING *p);
 void goto_target( struct POINTING *p );
 
-int longseek;
+//int longseek;
 int flipping;
 
 struct POINTING {
@@ -200,7 +200,7 @@ void set_speeds(){    // remember to disable interrupts, mount type specific
 }
 
 // test and impliment meridian flip 
-int meridian_flip( int state, struct POINTING *p ){
+int meridian_flip_old( int state, struct POINTING *p ){
 static struct POINTING *p2;
 static float save_ha, save_dec;
 uint32_t tm;
@@ -261,44 +261,7 @@ float more_ha;
 
 
 
-// update HA after the first seek and seek again
-void goto_target( struct POINTING *p ){
-static uint32_t tm;
-static struct POINTING *p2;
-float more_ha;
-
-   // !!! would need to flip GEM about here or maybe after picking up millis()
-   // !!! or save this target and generate new ones for the flip
-   // !!! get current side from the telescope struct, ha positive is west view so east side
-   // !!! maybe side = 1 for east and -1 for west will work in all cases
-   // !!! think GEM has a 6 hour offset in HA, 90 degrees * STEPS_PER_DEGREE for number of steps
-   
-   //if( finding == 1 && longseek == 1 ) longseek = 0, flipping = 0;       // re-seek
-   if( finding == 1 ) longseek = 0, flipping = 0;                        // re-seek
-
-   if( finding == 0 && longseek == 0 &&  flipping == 0 && mount_type == GEM ){
-      if( meridian_flip( 0, p ) ) return;
-   }
-
-   if( flipping ) p2 = p;
-   else if( longseek == 0 ){
-       p2 = p;            // a hack to allow to seek twice
-       tm = millis();
-       longseek = 1;
-   }
-   else{
-       tm = (millis() - tm)/1000;
-       if( tm > 400 ){              // over 4 minutes old (240)
-          longseek  = 0;
-          return;
-       }
-       more_ha = to_degrees_ha( 0, 0, tm );
-       p2->HA += more_ha;
-       longseek = 0;
-       // re-calc the other positions, alt az etc
-       calc_pointing( p2 );
-   }
-
+void goto_target( struct POINTING *p2 ){
 long ha,ra,dc,dec;
 
 //  mount specific for alt az, GEM, alt alt
@@ -311,10 +274,12 @@ long ha,ra,dc,dec;
         dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE;
       break;
       case GEM:
+        float th;
+        th = 90.0 - p2->DEC_;                                     // dec mirrored about 90 deg
         ra = p2->HA * (float)RA_STEPS_PER_DEGREE;
-        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE * telescope.side;  // dec is reversed for west 
+        dec = th * (float)DEC_STEPS_PER_DEGREE * telescope.side; 
         //add/sub the west/east offset for ra
-        //ra -= p2->side * 90.0 * (float)RA_STEPS_PER_DEGREE;
+        ra += telescope.side * 90.0 * (float)RA_STEPS_PER_DEGREE;
       break;
       case ALTAZ:
         ra = p2->AZ * (float)RA_STEPS_PER_DEGREE;
@@ -389,12 +354,13 @@ char sn = ' ';
 }
 
 void serial_display_pointing(struct POINTING *p){    // debug
+long hc,rc,dc,dec;
 
    Serial.print("DEC  ");  Serial.print( p->DEC_);
    Serial.print("  HA  "); Serial.print( p->HA );
    Serial.print("  Side  ");  Serial.print( p->side );
    Serial.print("  Find  "); Serial.print(finding);
-   Serial.print("  Long  "); Serial.print(longseek);
+//   Serial.print("  Long  "); Serial.print(longseek);
    Serial.print("  Flip  "); Serial.println( flipping );
    Serial.print("Alt  "); Serial.print( p->ALT );
    Serial.print("  Az "); Serial.print( p->AZ );
@@ -404,9 +370,40 @@ void serial_display_pointing(struct POINTING *p){    // debug
    Serial.print("  HA' "); Serial.print( p->HAp );
    Serial.print("  DEC'rate "); Serial.print( p->DECp_rate,5 );
    Serial.print("  HA'rate "); Serial.println( p->HAp_rate,5 );
+   noInterrupts();
+   hc = HAstep.currentPosition();
+   rc = RAstep.currentPosition();
+   dc = DCstep.currentPosition();
+   dec = DECstep.currentPosition();
+   interrupts();
+   Serial.print("HC "); Serial.print(hc);
+   Serial.print("  DC "); Serial.print(dc);
+   Serial.print("   RA "); Serial.print(rc);
+   Serial.print("  DEC "); Serial.println(dec);
    Serial.println();
 }
 
+void at_home(){
+
+}
+
+
+void go_home(){
+  
+}
+
+// GEM, two, two, two mounts in one
+void go_home_GEM(){    // considering GEM home as a disconnected state in HA,RA
+                       // dec axis is mirrored about 90 degrees and is zero step position
+      noInterrupts();
+      HAstep.moveTo( 0 );       
+      RAstep.moveTo( 0 );
+      DECstep.moveTo( 0 );
+      DCstep.moveTo( 90.0 * DC_STEPS_PER_DEGREE  );   
+      finding = 1;
+      interrupts();
+  
+}
 
 // conversions
 float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc ){

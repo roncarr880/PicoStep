@@ -44,16 +44,16 @@
 #define ALTALT 3
 uint8_t mount_type = GEM;
 
-#define SIDE_EAST 1.0
-#define SIDE_WEST -1.0
+#define SIDE_EAST -1.0
+#define SIDE_WEST  1.0
 
 // constants
 #define RAreverse 0
 #define DECreverse 0
-#define HA_STEPS_PER_DEGREE 3600L       // !!! make all floats and remove casts? // dummy stepper 1 sec of resolution
-#define DC_STEPS_PER_DEGREE 3600L
-#define DEC_STEPS_PER_DEGREE 2400L      // !!! made up numbers for now
-#define RA_STEPS_PER_DEGREE 2000L      // steps * micro steps * gearing / 360
+#define HA_STEPS_PER_DEGREE 3600L       // 3600 make all floats and remove casts? // dummy stepper 1 sec of resolution
+#define DC_STEPS_PER_DEGREE 1000L       // 3600
+#define DEC_STEPS_PER_DEGREE 1000L      // !!! made up numbers for now
+#define RA_STEPS_PER_DEGREE 1000L      // steps * micro steps * gearing / 360
 
 // location
 float my_longitude = -69.524125;
