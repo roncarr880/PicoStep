@@ -135,7 +135,14 @@ void setup() {
   DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );  // !!! init using the fake rate
   //telescope.DEC_ = 90.0;
   DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );
-  finding = 1;                         // flag goto in progress, turns on sidereal rate
+  if( mount_type == GEM ){
+     telescope.side = SIDE_EAST;
+       RAstep.setCurrentPosition( RA_STEPS_PER_DEGREE * 90L );
+       HAstep.setCurrentPosition( HA_STEPS_PER_DEGREE * 90L );
+  }
+  calc_telescope( &telescope);
+  
+  finding = 1;                         // !!! ?? flag goto in progress, turns on sidereal rate
 
   ITimer0.attachInterruptInterval(250, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
 
@@ -215,8 +222,13 @@ uint32_t t;
      if( u_mode == U_POINT ) display_pointing( &telescope );
      next_meridian_star();                                    // keep track of meridian in star database
      if( longseek && finding == 0 ) goto_target( &target );   // 2nd seek for ha error from goto delay
+     if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
    }
-   
+
+   // these could be here I think, above is extra 5 seconds but serial log shows what happens
+   //if( longseek && finding == 0 ) goto_target( &target );  // 2nd seek for ha error from goto delay
+   //if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
+
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
  
    // t = encoder();

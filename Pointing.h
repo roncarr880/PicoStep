@@ -14,13 +14,15 @@ extern void get_GMT_base(int dbg);                                 // why need t
 float to_degrees_dec( int8_t dg, int8_t mn, int8_t sc );
 float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc );
 void serial_display_pointing(struct POINTING *p);
+void goto_target( struct POINTING *p );
 
 int longseek;
+int flipping;
 
 struct POINTING {
    float DEC_;          // where pointing from HAstep stepper steps
    float HA;
-   int side;            // GEM east or west, fork under over?
+   float side;          // GEM east or west, fork under over?
    float ALT;           // Alt Az mount
    float AZ;
    float ALT_rate;      // rate is constantly changing as telescope is tracking an object
@@ -32,10 +34,8 @@ struct POINTING {
 };
 
 struct POINTING telescope;
-struct POINTING target;          // !!! kind of weak to have only one goto object, hardcoded in loop()
-struct POINTING SBO_object;      // !!! maybe an intevening function with a LIFO list on goto
-                                 // !!! and then could add meridian flip, target is then always the active
-                                 // !!! goto and loop() will be ok as is
+struct POINTING target;
+struct POINTING SBO_object;
                                  
 // update a pointing struct
 void calc_pointing( struct POINTING *p ){   
@@ -131,6 +131,7 @@ float ha, dec;
 
 
    calc_pointing( p );
+   
 }
 
 void calc_SBO_object( int obj, struct POINTING *p ){
@@ -198,10 +199,71 @@ void set_speeds(){    // remember to disable interrupts, mount type specific
      
 }
 
+// test and impliment meridian flip 
+int meridian_flip( int state, struct POINTING *p ){
+static struct POINTING *p2;
+static float save_ha, save_dec;
+uint32_t tm;
+float more_ha;
+
+   // state 0, test, 1 - 1st move, 2 - 2nd move 3 - flip and goto_target the saved pointer
+   // !!! should state be an argument or just a global, will need a global anyway
+   // !!! how to add to ha, same as below ?
+   // !!! maybe should just impliment a goto home here
+
+   switch( state ){
+      case 0:            // test if need a flip
+        if( p->HA >= 0.0 && telescope.side == SIDE_EAST ) return 0;
+        if( p->HA < 0.0 && telescope.side == SIDE_WEST && p->DEC_ > 0.0 ) return 0;    // want side east for low southeast
+        if( p->HA < 0.0 && telescope.side == SIDE_EAST && p->DEC_ <= 0.0 ) return 0;
+        // need to flip
+        flipping = 1;
+        p2 = p;
+        save_ha = p2->HA;   save_dec = p2->DEC_;
+        tm = millis();
+        return flipping;
+      break;
+      case 1:            // move in ra away from mount before moving dec
+        if( telescope.side == SIDE_EAST && telescope.HA < 20.0 ) p2->HA = 20.0 * telescope.side;
+        else if( telescope.side == SIDE_WEST && telescope.HA > -20.0 ) p2->HA = 20.0 * telescope.side;
+        else p2->HA = telescope.HA;        // no movement
+        p2->DEC_ = telescope.DEC_;
+        ++flipping;
+      break;
+      case 2:            // move to home position
+        p2->HA = 90.0 * telescope.side;
+        //p2->HA = 0.0;
+        p2->DEC_ = 90.0;
+        ++flipping;
+      break;
+      case 3:            // flip and goto
+        p2->HA = save_ha;   p2->DEC_ = save_dec;
+        telescope.side = ( telescope.side == SIDE_EAST ) ? SIDE_WEST : SIDE_EAST;
+        noInterrupts();
+        RAstep.setCurrentPosition( telescope.side * RA_STEPS_PER_DEGREE * 90L );
+        HAstep.setCurrentPosition( telescope.side * HA_STEPS_PER_DEGREE * 90L );
+        interrupts();
+        flipping = 0;
+      break;
+   }
+
+   if( flipping == 0 ){             // add missing time
+       tm = (millis() - tm)/1000;
+       more_ha = to_degrees_ha( 0, 0, tm );
+       p2->HA += more_ha;
+       // re-calc the other positions, alt az etc
+       //calc_pointing( p2 );
+   }
+
+   goto_target( p2 );
+   return flipping;
+}
+
+
 
 // update HA after the first seek and seek again
 void goto_target( struct POINTING *p ){
-static long tm;
+static uint32_t tm;
 static struct POINTING *p2;
 float more_ha;
 
@@ -211,15 +273,22 @@ float more_ha;
    // !!! maybe side = 1 for east and -1 for west will work in all cases
    // !!! think GEM has a 6 hour offset in HA, 90 degrees * STEPS_PER_DEGREE for number of steps
    
-   if( finding == 1 && longseek == 1 ) longseek = 0;       // re-seek
-   if( longseek == 0 ){
+   //if( finding == 1 && longseek == 1 ) longseek = 0, flipping = 0;       // re-seek
+   if( finding == 1 ) longseek = 0, flipping = 0;                        // re-seek
+
+   if( finding == 0 && longseek == 0 &&  flipping == 0 && mount_type == GEM ){
+      if( meridian_flip( 0, p ) ) return;
+   }
+
+   if( flipping ) p2 = p;
+   else if( longseek == 0 ){
        p2 = p;            // a hack to allow to seek twice
        tm = millis();
        longseek = 1;
    }
    else{
        tm = (millis() - tm)/1000;
-       if( tm > 300 ){              // over 4 minutes old (240)
+       if( tm > 400 ){              // over 4 minutes old (240)
           longseek  = 0;
           return;
        }
@@ -238,13 +307,14 @@ long ha,ra,dc,dec;
 
    switch(mount_type){
       case FORK:
-        ra = p2->HA * (float)RA_STEPS_PER_DEGREE;     // !!! all these mults can be outside case statement
-        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE; // !!! maybe not for GEM, see how that goes before changing
+        ra = p2->HA * (float)RA_STEPS_PER_DEGREE; 
+        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE;
       break;
       case GEM:
         ra = p2->HA * (float)RA_STEPS_PER_DEGREE;
-        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE;  //!!! dec is reversed for west 
-        //!!! add/sub the west/east offset for ra    
+        dec = p2->DEC_ * (float)DEC_STEPS_PER_DEGREE * telescope.side;  // dec is reversed for west 
+        //add/sub the west/east offset for ra
+        //ra -= p2->side * 90.0 * (float)RA_STEPS_PER_DEGREE;
       break;
       case ALTAZ:
         ra = p2->AZ * (float)RA_STEPS_PER_DEGREE;
@@ -324,7 +394,8 @@ void serial_display_pointing(struct POINTING *p){    // debug
    Serial.print("  HA  "); Serial.print( p->HA );
    Serial.print("  Side  ");  Serial.print( p->side );
    Serial.print("  Find  "); Serial.print(finding);
-   Serial.print("  Long  "); Serial.println(longseek);
+   Serial.print("  Long  "); Serial.print(longseek);
+   Serial.print("  Flip  "); Serial.println( flipping );
    Serial.print("Alt  "); Serial.print( p->ALT );
    Serial.print("  Az "); Serial.print( p->AZ );
    Serial.print("  AltRate "); Serial.print( p->ALT_rate,5 );
