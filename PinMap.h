@@ -36,6 +36,14 @@
 #define DC_STEP  11
 #define DC_DIR   11
 
+#define ENC_A    12           // wire to encoder, not to CNCv3
+#define ENC_B    13
+#define ENC_SW   14
+
+ // wire serial1 pins
+ //   nano pin 0 to cncv3 0
+ //   nano pin 1 to cncv3 1
+
 
 // mount types 
 #define FORK 0
@@ -50,8 +58,8 @@ uint8_t mount_type = GEM;
 // constants
 #define RAreverse 0
 #define DECreverse 0
-#define HA_STEPS_PER_DEGREE 3600L       // 3600 make all floats and remove casts? // dummy stepper 1 sec of resolution
-#define DC_STEPS_PER_DEGREE 1000L       // 3600
+#define HA_STEPS_PER_DEGREE 3600L       // 3600 !!! make all floats and remove casts? // dummy stepper 1 sec of resolution
+#define DC_STEPS_PER_DEGREE 1000L       // !!! 3600, think should be 4 * 3600 as a degree is 4 minutes - one step a second
 #define DEC_STEPS_PER_DEGREE 1000L      // !!! made up numbers for now
 #define RA_STEPS_PER_DEGREE 1000L      // steps * micro steps * gearing / 360
 
@@ -59,3 +67,9 @@ uint8_t mount_type = GEM;
 float my_longitude = -69.524125;
 float my_latitude  = 44.447;
 //float my_latitude = 30.0;
+
+// special
+#define MYSCOPE                      // my GEM needs to use side east when pointing southeast.  Comment out for normal
+                                     // use. Or this may be useful to cross meridian when pointed south without a flip.
+
+                                     

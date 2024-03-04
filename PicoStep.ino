@@ -5,7 +5,7 @@
 // A minute of longitude vs a minute of declination
 //   A minute of declination is 1/60 of a degree.   0.016666666 deg/min
 //   A minute of longitude, (an hour or 60 minutes is 15 deg).  0.25 deg/min, factor of 15
-// each second add 1.002737907 to sidereal time, or ( total delta seconds / 365.2425) * 366.2425
+// each second add 1.002737907 to sidereal time, ( total delta seconds / 365.2425) * 366.2425
 
 
 #include <Arduino.h>
@@ -63,16 +63,16 @@ volatile uint8_t finding;            // goto started
 uint32_t vtest_count;                // test 12 volt power, turn all off if falls below 9 volts
 uint32_t sidereal_count;             // update sidereal time and display
 uint32_t finding_count;
+uint32_t limit_count;
 
 uint8_t power_fail;                  // latched error condition
 uint8_t tracking = STAR;             // !!! probably should start at HOME
 
-#define U_STAR  0                // user modes, idle, display meridian star
-#define U_POINT 1                // pointing model display
+#define U_POINT 0                // telescope pointing display, select tracking mode
+#define U_GOTO  1                // select a database object with encoder and goto on long press
 #define U_RA    2                // alter RA with encoder, move scope
 #define U_DEC   3                // alter DEC with encoder, move scope
-#define U_GOTO  4                // select an object and goto with encoder
-uint8_t u_mode = U_STAR;        
+uint8_t u_mode = U_POINT;        
 
 int new_target, old_target=400;      // testing vars currently
 int meridian_star;               // database star/object crossing meridian
@@ -97,8 +97,10 @@ void setup() {
   LCD.setFont(SmallFont);
   LCD.clrScr();
   LCD.print((char *)"Hello",LEFT,ROW0);
-  delay(1000);
-  LCD.clrRow(0);  LCD.clrRow(1);
+  display_help();
+  delay(6000);
+  //LCD.clrRow(0);  LCD.clrRow(1);
+  LCD.clrScr();
     
   pinMode( 25, OUTPUT );              // LED pin
 
@@ -158,9 +160,9 @@ void setup() {
   display_stars2( meridian_star );
   calc_SBO_object( meridian_star, &SBO_object );
   display_pointing( &SBO_object );
-   new_target = meridian_star;               // !!! just for testing, does a goto
+new_target = meridian_star;               // !!! just for testing, does a goto
    
-  finding_count = vtest_count = sidereal_count = millis();
+  limit_count = finding_count = vtest_count = sidereal_count = millis();
 
 }
 
@@ -225,10 +227,10 @@ uint32_t t;
      sidereal_count = t;
      calc_telescope( &telescope);
      if( finding == 0 ) set_speeds( );       // always uses telescope struct ? 
-     if( u_mode == U_POINT ) display_pointing( &telescope );
-     next_meridian_star();                                    // keep track of meridian in star database
-     //if( longseek && finding == 0 ) goto_target( &target );   // 2nd seek for ha error from goto delay
-     //if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
+     if( next_meridian_star() == 0 ){        // keep track of meridian in star database whatever the U_mode is
+        if( u_mode == U_POINT ) display_pointing( &telescope );
+     }
+     //next_meridian_star();                                    
    }
 
    if( t - finding_count >= 900 ){              // !!! pick an interval, this is slow for printing
@@ -236,11 +238,12 @@ uint32_t t;
       que_goto( 0 );
       if( flipping ) meridian_flip( 0.0,0.0 );
    }
-   // these could be here I think, above is extra 5 seconds but serial log shows what happens
-   //if( longseek && finding == 0 ) goto_target( &target );  // 2nd seek for ha error from goto delay
-   //if( flipping && longseek == 0 && finding == 0 ) meridian_flip( flipping, &target );
 
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
+   if( t - limit_count >= 10000 ){
+      limit_count = t;
+      check_limits();
+   }
  
    // t = encoder();
    // t = buttons();
@@ -292,22 +295,48 @@ uint32_t t;
 
 int meridian_flip( float dest_ha, float dest_dec ){
 static uint8_t state;
+float dest;
 
-    switch( state ){
-       case 0:
-         if( dest_ha >= 0.0 && telescope.side == SIDE_EAST ) ;   // ok
+    switch( state ){ 
+       case 0:  
+         if( dest_ha >= -0.01 && telescope.side == SIDE_EAST ) ;   // ok
+         //if( dest_ha >= 0.0 && telescope.side == SIDE_EAST ) ;   // has extra flip sometimes dest = -0.0
+       #ifdef MYSCOPE         
+         // my mount needs to use  EAST side when looking southeast, also will swing through the meridian while tracking
          else if( dest_ha < 0.0 && dest_dec > 0.0 && telescope.side == SIDE_WEST ) ;  //ok
-         else if( dest_ha < 0.0 && dest_dec <= 0.0 && telescope.side == SIDE_EAST ) ;  // ok special south east 
+         else if( dest_ha < 0.0 && dest_dec <= 0.0 && telescope.side == SIDE_EAST ) ;  // ok
+       #else
+         else if( dest_ha < 0.0 && telescope.side == SIDE_WEST ) ;     // normal GEM ok
+       #endif  
          else ++state, flipping = 1;
        break;
-       case 1:
-         go_home_GEM();
-         ++state;
+   // do we want to move the RA away from the meridian here to avoid scope hitting the tripod?
+       case 1:                  // may need to move away from the mount to avoid hitting
+          if( telescope.DEC_ < 60.0 && \
+             ( (telescope.side == SIDE_EAST && telescope.HA < 20.0) || \
+             (telescope.side == SIDE_WEST && telescope.HA > -20.0) ) ){
+             dest = ( telescope.side == SIDE_EAST ) ? 20.0 : -20.0 ;
+             dest *=  (float)RA_STEPS_PER_DEGREE;
+             dest += telescope.side * 90.0 * (float)RA_STEPS_PER_DEGREE;
+             noInterrupts();
+             RAstep.moveTo( dest );
+             finding = 1;
+             interrupts();
+             state = 2; 
+             }
+          else state = 3;   
        break;
        case 2:
+         if( finding == 0 ) ++state, Serial.print("Here...");         // !!! remove the serial print
+       break;     
+       case 3:
+         go_home_GEM();   // in pointing.h
+         ++state;
+       break;
+       case 4:
          if( finding == 0 ) ++state;
        break;
-       case 3:
+       case 5:
          telescope.side = ( telescope.side == SIDE_EAST ) ? SIDE_WEST : SIDE_EAST;
          flipping = 0;
          state = 0;
@@ -323,7 +352,7 @@ static struct POINTING *p2;
 static uint32_t tm;
 float more_ha;
 
-   if( state == 0 && p == 0 ) return;
+   if( state == 0 && p == 0 ) return;     // idle state
    if( p != 0 ) state = 0;                // re-queue when goto is active ? or comment this out
 
    switch( state ){
@@ -346,18 +375,37 @@ float more_ha;
       case 4:              // wait for done
         if( finding == 0 ) ++state;
       break;
-      case 5:              // 2nd find for HA delay, meridian flip delay
+      case 5:              // 2nd find for HA delay, meridian flip delay, 
          tm = (millis() - tm)/1000;
          more_ha = to_degrees_ha( 0, 0, tm );
          p2->HA += more_ha;
-         calc_pointing( p2 );  // re-calc the other positions, alt az etc
+         calc_pointing( p2 );  // re-calc the other positions, alt az etc,(reports side blank in serial log)
          goto_target( p2 );
          state = 0;
       break;                
    }
 
-  Serial.print(state); Serial.write(' ');
+  if( SERIAL_DEBUG ){
+    Serial.print(state);
+    Serial.write(' ');
+  }
 }
+
+
+void check_limits(){
+
+  // check if moved past meridian - GEM only
+  if( mount_type == GEM && finding == 0 && flipping == 0 ){
+     if( telescope.side == SIDE_WEST && telescope.HA > 1.00 ){        // goto same should flip scope
+        target.HA = telescope.HA;
+        target.DEC_ = telescope.DEC_;
+        que_goto( &target );
+        return;
+     }
+  }
+  
+}
+
 
 // check power supply, if voltage sags the current is not controlled, fatal error
 // let rest of program run, steppers should be stopped with no current
@@ -470,21 +518,23 @@ int i;
 }
 
 // keep track of objects on meridian and display info if in idle mode
-void next_meridian_star(){
+int next_meridian_star(){
 int next;
 
    next = meridian_star + 1;
    if( next >= NUMSTAR ) next = 0;
    
    if( sid_hr == bstar[next].hr && sid_mn == bstar[next].mn ){
-u_mode = U_STAR; // !!! testing    
-      meridian_star = new_target = next; 
-      if( u_mode == U_STAR ){
+      meridian_star = next;
+    new_target = next;                          // !!! testing   
+      if( u_mode == U_POINT ){
         display_stars2( next );
         calc_SBO_object( next, &SBO_object );          //!!! diff object for this?
         display_pointing( &SBO_object );
+        return 1;
       }         
    }
+   return 0;
 }
 
 
@@ -499,6 +549,13 @@ static char line2[25];
    LCD.print( line2, 0, ROW2 );  LCD.clrRow(2,strlen(line2)*6 );  
 }
 
+
+void display_help(){
+
+    LCD.print( (char *)"TAP  - move forward", 0, ROW3 );
+    LCD.print( (char *)"DTAP - move backward", 0, ROW4 );
+    LCD.print( (char *)"LONG - Select item", 0, ROW5 );    
+}
 
 
 /*****  extern I2C  functions needed by the OLED library  ******/
@@ -818,5 +875,24 @@ float ALT, A, AZ;
     Serial.println();
 
 }
+
+
+       case 101:
+          dest = 0.0;    // !!! rewrite as one if then goto else state = 3 or could just breeze through state 2
+          // !!! not needed if dec > 60 or there abouts
+          // !!! this might belong with go_home_GEM but dropping finding == 1 will be an issue, finding == 2 ? no work
+          if( telescope.side == SIDE_EAST && telescope.HA < 20.0 ) dest = 20.0;
+          if( telescope.side == SIDE_WEST && telescope.HA > -20.0 ) dest = -20.0;
+          if( dest == 0.0 ) state = 3;
+          else{
+             state = 2;
+             dest *=  (float)RA_STEPS_PER_DEGREE;
+             dest += telescope.side * 90.0 * (float)RA_STEPS_PER_DEGREE;
+             noInterrupts();
+             RAstep.moveTo( dest );
+             finding = 1;
+             interrupts();  
+          }
+       break;
 
 #endif

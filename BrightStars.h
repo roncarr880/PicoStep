@@ -238,5 +238,5 @@ const struct BSTAR bstar[NUMSTAR] = {
 {"Cas", 23, 24, + 61, 35,"M 52 Open Cl "},
 {"And", 23, 25, + 42, 32,"NGC 7662 Plt Ne"},
 {"And", 23, 37, + 46, 27,"lambda And * "},
-{"Psc", 23, 46, + 03, 29,"19 (TX) Psc * ("},
+{"Psc", 23, 46, + 03, 29,"19 (TX) Psc * ("}
 };

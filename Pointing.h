@@ -145,6 +145,8 @@ float dec, ra, ha, sid;
       ra  = to_degrees_ha( bstar[obj].hr, bstar[obj].mn, 1 );     // !!! need seconds in bstar
       sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
       ha = sid - ra;                     // ra_hr = sid_hr - ha_hr;
+      if( ha > 12.0 ) ha -= 24.0;
+      if( ha <= -12.0 ) ha += 24.0; 
       p->HA = ha;
       p->DEC_ = dec;
 
@@ -153,21 +155,24 @@ float dec, ra, ha, sid;
 
 // set speeds if tracking, from telescope 
 void set_speeds(){    // remember to disable interrupts, mount type specific
+float sps;
 
+   sps = (float)HA_STEPS_PER_DEGREE / 240.0;           // steps per second, 240 is seconds in 4 minutes or 1 degree
+   
    switch( tracking ){
      case POWER_FAIL:  case HOME:  case OFF:
          HAspeed = RAspeed = DCspeed = DECspeed = 0.0;
       break;
       case STAR:
-         HAspeed = 15.0 * SIDEREAL;
+         HAspeed = sps * SIDEREAL;
          DCspeed = 0.0;
       break;
       case SUN:
-         HAspeed = 15.0 * SOLAR;
+         HAspeed = sps * SOLAR;
          DCspeed = 0.0;
       break;
       case MOON:
-         HAspeed = 15.0 * LUNAR;
+         HAspeed = sps * LUNAR;
          DCspeed = 0.0;
       break;
    }
@@ -199,6 +204,7 @@ void set_speeds(){    // remember to disable interrupts, mount type specific
      
 }
 
+#ifdef NOWAY
 // test and impliment meridian flip 
 int meridian_flip_old( int state, struct POINTING *p ){
 static struct POINTING *p2;
@@ -258,7 +264,7 @@ float more_ha;
    goto_target( p2 );
    return flipping;
 }
-
+#endif
 
 
 void goto_target( struct POINTING *p2 ){
@@ -307,6 +313,16 @@ int ra_hr, ra_min;
 int dec_deg, dec_min;
 float sid,ra,ha,dec;
 char sn = ' ';
+static int holdoff;      // display meridian star longer than 5 seconds
+
+  if( holdoff ){
+     --holdoff;
+     if( holdoff == 0 && p == &telescope ){
+         LCD.clrRow(2);
+         LCD.print((char *)"---Telescope---",CENTER,ROW2);
+     }
+     else if( p == &telescope ) return;
+  }
 
   sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
   ra = sid - p->HA;
@@ -350,7 +366,9 @@ char sn = ' ';
   LCD.print((char *)" deg ",9*6,ROW7 );
   LCD.printNumI( dec_min, 15*6,ROW7,2,' ' );
   LCD.putch('\'');
-  
+
+  if( p != &telescope ) holdoff = 4;      // display meridian cross a bit longer
+
 }
 
 void serial_display_pointing(struct POINTING *p){    // debug
@@ -358,7 +376,10 @@ long hc,rc,dc,dec;
 
    Serial.print("DEC  ");  Serial.print( p->DEC_);
    Serial.print("  HA  "); Serial.print( p->HA );
-   Serial.print("  Side  ");  Serial.print( p->side );
+   Serial.print("  Side_");  
+   if( p->side == SIDE_EAST ) Serial.print( "East" );
+   else if( p->side == SIDE_WEST ) Serial.print( "West" );
+   else Serial.print( "   " );
    Serial.print("  Find  "); Serial.print(finding);
 //   Serial.print("  Long  "); Serial.print(longseek);
    Serial.print("  Flip  "); Serial.println( flipping );
@@ -393,13 +414,13 @@ void go_home(){
 }
 
 // GEM, two, two, two mounts in one
-void go_home_GEM(){    // considering GEM home as a disconnected state in HA,RA
-                       // dec axis is mirrored about 90 degrees and is zero step position
+void go_home_GEM(){    // considering GEM home as a disconnected state in HA,RA ( ha is zero, ra is -90 or 90 )
+                       // dec axis is mirrored about 90 degrees and is zero step position when at 90
       noInterrupts();
-      HAstep.moveTo( 0 );       
-      RAstep.moveTo( 0 );
-      DECstep.moveTo( 0 );
-      DCstep.moveTo( 90.0 * DC_STEPS_PER_DEGREE  );   
+      HAstep.moveTo( 0 );                                 // dummy scope( HA ) at zero
+      RAstep.moveTo( 0 );                                 // RA at 90 or -90 depending upon side, side is sort of in
+      DECstep.moveTo( 0 );                                //    limbo in this position
+      DCstep.moveTo( 90.0 * DC_STEPS_PER_DEGREE  );       // the dummy scope is at 90
       finding = 1;
       interrupts();
   
