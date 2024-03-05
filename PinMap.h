@@ -50,7 +50,7 @@
 #define GEM  1
 #define ALTAZ 2
 #define ALTALT 3
-uint8_t mount_type = GEM;
+uint8_t mount_type = ALTALT;
 
 #define SIDE_EAST -1.0
 #define SIDE_WEST  1.0
@@ -58,8 +58,8 @@ uint8_t mount_type = GEM;
 // constants
 #define RAreverse 0
 #define DECreverse 0
-#define HA_STEPS_PER_DEGREE 3600L       // 3600 !!! make all floats and remove casts? // dummy stepper 1 sec of resolution
-#define DC_STEPS_PER_DEGREE 1000L       // !!! 3600, think should be 4 * 3600 as a degree is 4 minutes - one step a second
+#define HA_STEPS_PER_DEGREE 3600L       // 3600  dummy stepper 1 sec of resolution
+#define DC_STEPS_PER_DEGREE 1000L       // !!! 3600 just using 1000 to read angle from step count
 #define DEC_STEPS_PER_DEGREE 1000L      // !!! made up numbers for now
 #define RA_STEPS_PER_DEGREE 1000L      // steps * micro steps * gearing / 360
 

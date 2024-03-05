@@ -138,16 +138,17 @@ void setup() {
     // !!! init using the fake rate
   //telescope.DEC_ = 90.0;
   // !!! should be calling the at home function here !!!
-  DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );       // at 90 degree
-  if( mount_type == GEM ){
-     telescope.side = SIDE_EAST;
-     //RAstep.setCurrentPosition( RA_STEPS_PER_DEGREE * 90L );
-     //HAstep.setCurrentPosition( HA_STEPS_PER_DEGREE * 90L );
-     // start at zero HA and mount disconnected from RA
-     // mount points 90 deg in dec and that is the zero step position
-  }
-  else DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );
-  
+  //DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );       // at 90 degree
+  //if( mount_type == GEM ){
+  //   telescope.side = SIDE_EAST;
+     ////RAstep.setCurrentPosition( RA_STEPS_PER_DEGREE * 90L );
+     ////HAstep.setCurrentPosition( HA_STEPS_PER_DEGREE * 90L );
+     //// start at zero HA and mount disconnected from RA
+     //// mount points 90 deg in dec and that is the zero step position
+  //}
+  //else DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );
+
+  at_home();
   calc_telescope( &telescope);
   
   finding = 1;                         // !!! ?? flag goto in progress, turns on sidereal rate

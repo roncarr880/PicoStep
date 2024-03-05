@@ -37,7 +37,7 @@ const struct BSTAR bstar[NUMSTAR] = {
 {"Cet", 02, 42, 0, 01,"M 77 Spl Gal "},
 {"Cet", 02, 43, + 03, 14,"gamma Cet ** "},
 {"Per", 02, 50, + 55, 53,"eta Per * * "},
-{"Eri", 02, 58, - 40, 18,"theta Eri ** "},    // not useful for me
+{"Eri", 02, 58, - 40, 18,"theta Eri ** "},    // not useful for me, 5 deg high at best.
 {"Cep", 03, 06, + 79, 25,"Struve 320 ** "},
 {"Per", 03, 24, + 49, 51,"alpha Per * "},
 {"Tau", 03, 47, + 24, 06,"M 45 Pleiades O"},

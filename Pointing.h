@@ -185,15 +185,16 @@ float sps;
       break;
       case ALTAZ:
         RAspeed = HAspeed * telescope.AZ_rate * (float)RA_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
-        DECspeed = HAspeed * telescope.ALT_rate * (float)DEC_STEPS_PER_DEGREE / (float)DC_STEPS_PER_DEGREE;
+        DECspeed = HAspeed * telescope.ALT_rate * (float)DEC_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
       break;
       case ALTALT:
         RAspeed = HAspeed * telescope.HAp_rate * (float)RA_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
-        DECspeed = HAspeed * telescope.DECp_rate * (float)DEC_STEPS_PER_DEGREE / (float)DC_STEPS_PER_DEGREE;
+        DECspeed = HAspeed * telescope.DECp_rate * (float)DEC_STEPS_PER_DEGREE / (float)HA_STEPS_PER_DEGREE;
       break;       
    }
 
    // !! use an error PID for alt az, alt alt ?  Is there a tracking problem to be fixed?
+   // !! alt az seems to run fast especially in alt
 
    noInterrupts();
       RAstep.setSpeed( RAspeed );   
@@ -404,7 +405,46 @@ long hc,rc,dc,dec;
    Serial.println();
 }
 
-void at_home(){
+  
+void at_home(){                         // !!! revisit these setups for each type in mount_type, are they correct?
+long ha,ra,dc,dec;                      // !!! turn off tracking here ?
+
+  noInterrupts();
+  switch( mount_type ){
+    case FORK:                                   // pointing at pole
+      telescope.HA = 0;
+      telescope.DEC_ = 90.0;
+      ha = ra = 0;
+      dc = 90.0 * DC_STEPS_PER_DEGREE;
+      dec = 90.0 * DEC_STEPS_PER_DEGREE;
+    break;
+    case GEM:                                    // pointing at pole, dec mirrored at zero steps here
+      telescope.HA = 0;                          // ra and ha disconnected, need goto to start
+      telescope.DEC_ = 90.0;
+      ha = ra = 0;
+      dc = 90 * DC_STEPS_PER_DEGREE;
+      dec = 0;
+      telescope.side = SIDE_EAST;
+    break;
+    case ALTAZ:                                  // pointing at north horizon, set with a level
+      telescope.HA = 0;
+      telescope.DEC_ = 0;
+      ha = ra = dc = dec = 0;
+    break;
+    case ALTALT:                                 // pointing at zenith, can set with level, can't point at horizon
+      telescope.HA = 0;                          // RA azis points north
+      telescope.DEC_ = my_latitude;
+      ha = ra = 0;
+      dc = my_latitude * DC_STEPS_PER_DEGREE;
+      dec = 0;
+    break;
+  }
+
+     DCstep.setCurrentPosition( dc );
+     DECstep.setCurrentPosition( dec );
+     HAstep.setCurrentPosition( ha );
+     RAstep.setCurrentPosition( ra );
+  interrupts();
 
 }
 
