@@ -36,13 +36,13 @@
 #define DC_STEP  11
 #define DC_DIR   11
 
-#define ENC_A    12           // wire to encoder, not to CNCv3
-#define ENC_B    13
+#define ENC_A    13           // wire to encoder, not to CNCv3
+#define ENC_B    12
 #define ENC_SW   14
 
  // wire serial1 pins
- //   nano pin 0 to cncv3 0
- //   nano pin 1 to cncv3 1
+ //   pico pin 0 to cncv3 0
+ //   pico pin 1 to cncv3 1
 
 
 // mount types 
@@ -50,7 +50,7 @@
 #define GEM  1
 #define ALTAZ 2
 #define ALTALT 3
-uint8_t mount_type = ALTALT;
+uint8_t mount_type = GEM;
 
 #define SIDE_EAST -1.0
 #define SIDE_WEST  1.0
@@ -70,6 +70,6 @@ float my_latitude  = 44.447;
 
 // special
 #define MYSCOPE                      // my GEM needs to use side east when pointing southeast.  Comment out for normal
-                                     // use. Or this may be useful to cross meridian when pointed south without a flip.
+                                     // use. Or this may be useful to cross meridian without a flip when pointed south.
 
                                      

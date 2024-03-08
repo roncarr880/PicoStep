@@ -1,7 +1,7 @@
 
 // Telescope pointing model for 4 or 5 scopes
 //   dummy scope where one second of HA is one step of the dummy motor
-//   Fork mount - could just be same as the dummy unless want to alter under pole behavior
+//   Fork mount - same as the dummy unless want to alter under pole behavior
 //   GEM
 //   Alt Az
 //   Alt Alt or Lazy Yoke
@@ -145,8 +145,8 @@ float dec, ra, ha, sid;
       ra  = to_degrees_ha( bstar[obj].hr, bstar[obj].mn, 1 );     // !!! need seconds in bstar
       sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
       ha = sid - ra;                     // ra_hr = sid_hr - ha_hr;
-      if( ha > 12.0 ) ha -= 24.0;
-      if( ha <= -12.0 ) ha += 24.0; 
+      if( ha > 180.0 ) ha -= 360.0;
+      if( ha <= -180.0 ) ha += 360.0; 
       p->HA = ha;
       p->DEC_ = dec;
 
@@ -328,6 +328,7 @@ static int holdoff;      // display meridian star longer than 5 seconds
   sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
   ra = sid - p->HA;
   if( ra < 0 ) ra += 360;
+  if( ra >= 360 ) ra -= 360;
   ra =  ra / 15.0;
   ra_hr = ra;
   ra -= ra_hr;
@@ -339,7 +340,9 @@ static int holdoff;      // display meridian star longer than 5 seconds
   ha -= ha_hr;
   ha_min = ha * 60.0;  
 
+  if( p->ALT < 10.0 ) LCD.invertText(1);                    // flag object too low 
   LCD.print((char *)"Alt : ", 0, ROW3 );
+  LCD.invertText(0);
   LCD.printNumF( p->ALT, 2, 7*6, ROW3, '.', 5 );
   LCD.print((char *)"Az  : ", 0, ROW4 );
   LCD.printNumF( p->AZ, 2, 7*6, ROW4, '.', 5 );

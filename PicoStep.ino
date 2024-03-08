@@ -66,7 +66,8 @@ uint32_t finding_count;
 uint32_t limit_count;
 
 uint8_t power_fail;                  // latched error condition
-uint8_t tracking = STAR;             // !!! probably should start at HOME
+uint8_t track_selection = STAR;
+uint8_t tracking = STAR;         // !!! probably should start at HOME
 
 #define U_POINT 0                // telescope pointing display, select tracking mode
 #define U_GOTO  1                // select a database object with encoder and goto on long press
@@ -76,6 +77,7 @@ uint8_t u_mode = U_POINT;
 
 int new_target, old_target=400;      // testing vars currently
 int meridian_star;               // database star/object crossing meridian
+int target_star;
 
 // speeds
 #define SIDEREAL SFACTOR1
@@ -84,7 +86,9 @@ int meridian_star;               // database star/object crossing meridian
 
 float HAspeed, RAspeed, DCspeed, DECspeed;
 
-#include "Pointing.h"            // more program code, 
+#include "Pointing.h"            // more program code
+#include "Encoder.h"
+
 
 
 void setup() {
@@ -101,6 +105,8 @@ void setup() {
   delay(6000);
   //LCD.clrRow(0);  LCD.clrRow(1);
   LCD.clrScr();
+
+  encoder_setup();
     
   pinMode( 25, OUTPUT );              // LED pin
 
@@ -211,6 +217,7 @@ bool TimerHandler0(struct repeating_timer *t){
 
 void loop() {
 uint32_t t;
+int8_t t2;
 
  // dispatch jobs from timer counters or millis counters
    // calc and display sidereal time, 3 objects or double wide ra,ha,dec, 
@@ -246,8 +253,10 @@ uint32_t t;
       check_limits();
    }
  
-   // t = encoder();
-   // t = buttons();
+   t2 = encoder();
+   if( t2 ) menu( t2 );
+   t2 = switches();
+   if( t2 >= TAP ) menu_action(t2), sstate[0] = DONE;
 
 // testing
 //   noInterrupts();
@@ -264,12 +273,12 @@ uint32_t t;
       old_target = new_target;
 
       // abs macro bugs.....?
-      long stp = (long)bstar[new_target].dd;
-      if( stp < 0 ) stp = -stp;
-      stp *= 60L;
-      stp += (long)bstar[new_target].dm;
+     // long stp = (long)bstar[new_target].dd;
+     // if( stp < 0 ) stp = -stp;
+     // stp *= 60L;
+     // stp += (long)bstar[new_target].dm;
       // long stp = abs( (long)bstar[new_target].dd ) * 60 + (long)bstar[new_target].dm;
-      if( bstar[new_target].dd < 0 ) stp = -stp;
+     // if( bstar[new_target].dd < 0 ) stp = -stp;
  // if( loops > -30 ){    
  //    stp = loops * 60;
  //    loops -= 15;
@@ -285,12 +294,86 @@ uint32_t t;
     //  DCstep.moveTo( 15 * stp );           // resolution same as 1 second of ha 
     //  finding = 1;               // important to set the moving flag
     //  interrupts();
-      calc_SBO_object( new_target, &target );
-      que_goto( &target );
-      Serial.println( stp );
-      u_mode = U_POINT;
+     // calc_SBO_object( new_target, &target );
+     // que_goto( &target );
+     // Serial.println( stp );
+     // u_mode = U_POINT;
    }
    
+}
+
+
+
+// status display, tracking mode
+//#define POWER_FAIL 0
+//#define HOME 1
+//#define OFF  2
+//#define STAR 3          // > off is moving
+//#define SUN  4
+//#define MOON 5       
+void menu( int8_t v ){
+  
+  switch( u_mode ){
+     case U_POINT:
+        track_selection += v;
+        if( track_selection < HOME ) track_selection = MOON;
+        if( track_selection > MOON ) track_selection = HOME;
+        disp_status( track_selection );           // showing selection, but not selected. select is long press
+     break;
+     case U_GOTO:
+        target_star -= v;                          // clockwise to the west, reverse from database of stars
+        if( target_star < 0 ) target_star = NUMSTAR -1;
+        if( target_star >= NUMSTAR ) target_star = 0;
+        display_stars2( target_star );
+        calc_SBO_object( target_star, &SBO_object );
+        display_pointing( &SBO_object );                
+     break;
+     case U_RA:
+     break;
+     case U_DEC:
+     break;
+     // add a UTC time adjust mode ?
+  }
+}
+
+void menu_action( int8_t sw ){          // act on switch press
+  // when leaving U_POINT, display_status tracking or have a timeout and display actual status
+
+  if( sw == TAP ){
+     if( ++u_mode > U_DEC ) u_mode = U_DEC;       // or have tap go back to U_RA
+  }
+  else if( sw == DTAP ){
+     if( --u_mode < U_POINT ) u_mode = U_POINT;
+  }
+  else if( sw == LONGP ){
+     switch( u_mode ){
+       case U_POINT:
+          tracking = track_selection;
+          if( tracking == HOME ) go_home();
+          disp_status( tracking );
+       break;
+       case U_GOTO:
+          calc_SBO_object( target_star, &target );
+          que_goto( &target );
+          u_mode = U_POINT;                        // revert to telescope pointing display
+       break;
+       case U_RA:               // sync here
+       case U_DEC:
+       break;
+     }
+  }
+
+  if( sw == DTAP || sw == TAP ){     // initilize entry to new user mode
+     disp_status( tracking );
+     if( u_mode == U_GOTO ){
+        target_star = meridian_star;
+        display_stars2( target_star );
+        calc_SBO_object( target_star, &SBO_object );
+        display_pointing( &SBO_object );        
+     }
+     // U_RA, U_DEC here !!!
+  }
+  
 }
 
 
@@ -354,8 +437,8 @@ static uint32_t tm;
 float more_ha;
 
    if( state == 0 && p == 0 ) return;     // idle state
-   if( p != 0 ) state = 0;                // re-queue when goto is active ? or comment this out
-
+   //if( p != 0 ) state = 0;                // re-queue when goto is active ? or comment this out
+                                          // re-queue hangs in meridian flip? re-entrant issue maybe
    switch( state ){
       case 0:              // que the goto
         if( p ){
@@ -383,6 +466,7 @@ float more_ha;
          calc_pointing( p2 );  // re-calc the other positions, alt az etc,(reports side blank in serial log)
          goto_target( p2 );
          state = 0;
+         tracking = STAR;      // should we enable tracking after a goto?
       break;                
    }
 
@@ -428,22 +512,26 @@ int v;
 const char stat[6][5] = {
   "PWR ", "HOME", "OFF ", "STAR", "SUN ", "MOON" 
 };
+const char stat2[4][5] = {
+  "TRK ", "GOTO", "HA  ", "DEC "
+};
 
 // write to status area of the screen, top lines, left side
 void disp_status( uint8_t msg ){
 
-   //LCD.clrRow(0,0,29);    // always print 4 characters?
-   //LCD.clrRow(1,0,29);
-
+   //if( msg != POWER_FAIL && msg == tracking ) LCD.invertText( 1 );
    LCD.print( stat[msg],0,ROW0 );
+   //LCD.invertText( 0 );
+   if( msg == POWER_FAIL ) LCD.print((char *)"FAIL",0,ROW1);
+   else LCD.print( stat2[u_mode],0,ROW1);
 
-   // 2nd line if needed
-   switch( msg ){
-      case POWER_FAIL:
-         LCD.print((char *)"FAIL",0,ROW1);
-      break;
+   if( msg != POWER_FAIL && msg == tracking && u_mode == U_POINT){
+      // LCD.invertText( 1 );
+       LCD.print( (char *)"*",3*6,ROW1 );
+      // LCD.invertText( 0 );
    }
-  
+   
+    
 }
 
 
