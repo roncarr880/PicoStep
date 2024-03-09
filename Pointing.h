@@ -141,8 +141,8 @@ float dec, ra, ha, sid;
    get_GMT_base( SERIAL_DEBUG );
    
             // get position from database object
-      dec = to_degrees_dec( bstar[obj].dd, bstar[obj].dm, 1 );
-      ra  = to_degrees_ha( bstar[obj].hr, bstar[obj].mn, 1 );     // !!! need seconds in bstar
+      dec = to_degrees_dec( bstar[obj].dd, bstar[obj].dm, bstar[obj].ds );
+      ra  = to_degrees_ha( bstar[obj].hr, bstar[obj].mn, bstar[obj].sc );
       sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
       ha = sid - ra;                     // ra_hr = sid_hr - ha_hr;
       if( ha > 180.0 ) ha -= 360.0;

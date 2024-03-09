@@ -356,6 +356,7 @@ void menu_action( int8_t sw ){          // act on switch press
           calc_SBO_object( target_star, &target );
           que_goto( &target );
           u_mode = U_POINT;                        // revert to telescope pointing display
+          disp_status( tracking );
        break;
        case U_RA:               // sync here
        case U_DEC:
