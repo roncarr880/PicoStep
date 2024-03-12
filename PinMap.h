@@ -68,6 +68,14 @@ float my_longitude = -69.524125;
 float my_latitude  = 44.447;
 //float my_latitude = 30.0;
 
+// limits
+float horizon_limit = -1.0;
+float overhead_limit = 80.0;           // less < 90 for scope that interfers with tripod legs
+float ha_east_limit = -100.0;          // -90 keeps scope on top
+float ha_west_limit = 100.0;           // more than 90 allows under pole for GEM
+float alt_north_limit = 80.0;          // alt alt mount only, yoke limits if mounted in a yoke
+float alt_south_limit = -80.0;         // alt alt mount only
+
 // special
 #define MYSCOPE                      // my GEM needs to use side east when pointing southeast.  Comment out for normal
                                      // use. Or this may be useful to cross meridian without a flip when pointed south.

@@ -10,14 +10,13 @@
 
 #define R2D 57.2958       // degrees in a radian
 
-extern void get_GMT_base(int dbg);                                 // why need to prototype in this .h?
+extern void get_GMT_base(int dbg);                                 // linker needs prototypes it seems.
 float to_degrees_dec( int8_t dg, int8_t mn, int8_t sc );
 float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc );
 void serial_display_pointing(struct POINTING *p);
 void goto_target( struct POINTING *p );
+void go_home_GEM();
 
-//int longseek;
-int flipping;
 
 struct POINTING {
    float DEC_;          // where pointing from HAstep stepper steps
@@ -160,7 +159,7 @@ float sps;
    sps = (float)HA_STEPS_PER_DEGREE / 240.0;           // steps per second, 240 is seconds in 4 minutes or 1 degree
    
    switch( tracking ){
-     case POWER_FAIL:  case HOME:  case OFF:
+     case POWER_FAIL:  case HOME:  case OFF: case RSET:
          HAspeed = RAspeed = DCspeed = DECspeed = 0.0;
       break;
       case STAR:
@@ -194,14 +193,14 @@ float sps;
    }
 
    // !! use an error PID for alt az, alt alt ?  Is there a tracking problem to be fixed?
-   // !! alt az seems to run fast especially in alt
 
    noInterrupts();
       RAstep.setSpeed( RAspeed );   
       HAstep.setSpeed( HAspeed );
       DECstep.setSpeed( DECspeed );
       //DCstep.setSpeed( DCspeed );      // always zero I think
-   interrupts();     
+   interrupts();
+
      
 }
 
@@ -316,6 +315,8 @@ float sid,ra,ha,dec;
 char sn = ' ';
 static int holdoff;      // display meridian star longer than 5 seconds
 
+  if( u_mode >= U_RA ) return;            // LCD screen in use by other user screens
+  
   if( holdoff ){
      --holdoff;
      if( holdoff == 0 && p == &telescope ){
@@ -340,7 +341,8 @@ static int holdoff;      // display meridian star longer than 5 seconds
   ha -= ha_hr;
   ha_min = ha * 60.0;  
 
-  if( p->ALT < 10.0 ) LCD.invertText(1);                    // flag object too low 
+  if( p->ALT < horizon_limit ) LCD.invertText(1);           // flag object too low to see
+  if( p->ALT > overhead_limit ) LCD.invertText(1);          // exceed limits, goto will fail
   LCD.print((char *)"Alt : ", 0, ROW3 );
   LCD.invertText(0);
   LCD.printNumF( p->ALT, 2, 7*6, ROW3, '.', 5 );
@@ -448,15 +450,24 @@ long ha,ra,dc,dec;                      // !!! turn off tracking here ?
      HAstep.setCurrentPosition( ha );
      RAstep.setCurrentPosition( ra );
   interrupts();
+  
+  digitalWrite( DRV_ENABLE, LOW );   // enable steppers, recover from over limit steppers off with reset command
+
 
 }
 
 
 void go_home(){
-  
+
+  if( mount_type == GEM ){
+     go_home_GEM();
+     return;
+  }
+
+  // at_home();   !!! not now, not here,  need to wait for movement to stop
 }
 
-// GEM, two, two, two mounts in one
+// GEM, this function also used for meridian flip
 void go_home_GEM(){    // considering GEM home as a disconnected state in HA,RA ( ha is zero, ra is -90 or 90 )
                        // dec axis is mirrored about 90 degrees and is zero step position when at 90
       noInterrupts();

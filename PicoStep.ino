@@ -45,19 +45,23 @@ extern unsigned char BigNumbers[];
 
 // status display, tracking mode
 #define POWER_FAIL 0
-#define HOME 1
+#define HOME 1          // go home
 #define OFF  2
 #define STAR 3          // > off is moving
 #define SUN  4
 #define MOON 5
+#define RSET 6          // reset, at home
 
 
 DateTime GMT_eq;
 DateTime today;
 
 
-uint8_t sid_hr, sid_mn, sid_sec;
+uint8_t sid_hr, sid_mn, sid_sec;     // local sidereal time
 volatile uint8_t finding;            // goto started
+uint8_t flipping;                    // GEM meridian flip in progress
+uint8_t gem_ignore_limits;           // GEM intermediate movements, meridian flip
+
 
 // jobs run on timers
 uint32_t vtest_count;                // test 12 volt power, turn all off if falls below 9 volts
@@ -66,16 +70,17 @@ uint32_t finding_count;
 uint32_t limit_count;
 
 uint8_t power_fail;                  // latched error condition
-uint8_t track_selection = STAR;
-uint8_t tracking = STAR;         // !!! probably should start at HOME
+uint8_t track_selection = RSET;
+uint8_t tracking = RSET;
+
 
 #define U_POINT 0                // telescope pointing display, select tracking mode
 #define U_GOTO  1                // select a database object with encoder and goto on long press
 #define U_RA    2                // alter RA with encoder, move scope
 #define U_DEC   3                // alter DEC with encoder, move scope
-uint8_t u_mode = U_POINT;        
+uint8_t u_mode = U_POINT;        // user interface mode1
 
-int new_target, old_target=400;      // testing vars currently
+//int new_target, old_target=400;      // testing vars currently
 int meridian_star;               // database star/object crossing meridian
 int target_star;
 
@@ -117,9 +122,9 @@ void setup() {
   DECstep.setAcceleration( 500.0 );
   DECstep.setMinPulseWidth( 3 );
   DECstep.setPinsInverted( DECreverse,0,0);
-  HAstep.setAcceleration( 500.0 );            // fake motor, do not enable output(s). using accelstepper to
+  HAstep.setAcceleration( 1000.0 );            // fake motor, do not enable output(s). using accelstepper to provide tracking rates
   HAstep.setMinPulseWidth( 1 );
-  DCstep.setAcceleration( 500.0 );            // fake motor, do not enable output(s)
+  DCstep.setAcceleration( 1000.0 );            // fake motor, do not enable output(s)
   DCstep.setMinPulseWidth( 1 );
   
   DECstep.enableOutputs();
@@ -157,17 +162,17 @@ void setup() {
   at_home();
   calc_telescope( &telescope);
   
-  finding = 1;                         // !!! ?? flag goto in progress, turns on sidereal rate
+  //finding = 1;                         // !!! ?? flag goto in progress, turns on sidereal rate
 
   ITimer0.attachInterruptInterval(250, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
 
-  disp_status(STAR);                   // !!! starts with clock drive enabled, is this ok?
+  disp_status(tracking);
   get_GMT_base(SERIAL_DEBUG);
   init_meridian_star();
   display_stars2( meridian_star );
   calc_SBO_object( meridian_star, &SBO_object );
   display_pointing( &SBO_object );
-new_target = meridian_star;               // !!! just for testing, does a goto
+//new_target = meridian_star;               // !!! just for testing, does a goto
    
   limit_count = finding_count = vtest_count = sidereal_count = millis();
 
@@ -225,20 +230,19 @@ int8_t t2;
    // measure 12 volt power is ok, turn off stepper drivers if not ok, 1 sec
    // encoder and switch reading - 1 ms
    // serial and serial1, command processor - when available, not timer I think
-   // local goto from encoder, use moveTo or move?
+   // local movement from encoder, use moveTo or move?
    // local goto from SBO database
    // limits
 
    t = millis();
 
-   if( t - sidereal_count >= 5000 ){
+   if( t - sidereal_count >= 5000 ){         // update sidereal time each 5 seconds
      sidereal_count = t;
      calc_telescope( &telescope);
-     if( finding == 0 ) set_speeds( );       // always uses telescope struct ? 
+     if( finding == 0 ) set_speeds( ); 
      if( next_meridian_star() == 0 ){        // keep track of meridian in star database whatever the U_mode is
         if( u_mode == U_POINT ) display_pointing( &telescope );
-     }
-     //next_meridian_star();                                    
+     }                          
    }
 
    if( t - finding_count >= 900 ){              // !!! pick an interval, this is slow for printing
@@ -248,7 +252,7 @@ int8_t t2;
    }
 
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
-   if( t - limit_count >= 10000 ){
+   if( t - limit_count >= 1003 ){
       limit_count = t;
       check_limits();
    }
@@ -258,47 +262,6 @@ int8_t t2;
    t2 = switches();
    if( t2 >= TAP ) menu_action(t2), sstate[0] = DONE;
 
-// testing
-//   noInterrupts();
-//   long ha = RAstep.currentPosition();
-//   long dec = DECstep.currentPosition();
-//   interrupts();
-   //Serial.write('d'); Serial.print( dec );  Serial.write(' ');
-   //Serial.write('h'); Serial.write('a'); Serial.print( ha ); Serial.write(' ');
-
-//static int loops = 30;   // !!! test specific values of declination, test loops
-
-   // fake goto the current target
-   if( new_target != old_target ){
-      old_target = new_target;
-
-      // abs macro bugs.....?
-     // long stp = (long)bstar[new_target].dd;
-     // if( stp < 0 ) stp = -stp;
-     // stp *= 60L;
-     // stp += (long)bstar[new_target].dm;
-      // long stp = abs( (long)bstar[new_target].dd ) * 60 + (long)bstar[new_target].dm;
-     // if( bstar[new_target].dd < 0 ) stp = -stp;
- // if( loops > -30 ){    
- //    stp = loops * 60;
- //    loops -= 15;
- // }    
-     // telescope.DEC_ = to_degrees_dec( bstar[new_target].dd, bstar[new_target].dm, 0 );
-     
-      //stp *= 5;                  // fake steps per 1 minute of dec
-      
-    //  noInterrupts();
-    //  HAstep.moveTo( 0 * 60 * 60 );        // h * 60 * 60
-    //  RAstep.moveTo( 0 * 60 * 60 );        // hour angle of test star, west positive here
-    //  DECstep.moveTo( 5 * stp );           // !!! fake steps per minute
-    //  DCstep.moveTo( 15 * stp );           // resolution same as 1 second of ha 
-    //  finding = 1;               // important to set the moving flag
-    //  interrupts();
-     // calc_SBO_object( new_target, &target );
-     // que_goto( &target );
-     // Serial.println( stp );
-     // u_mode = U_POINT;
-   }
    
 }
 
@@ -310,14 +273,15 @@ int8_t t2;
 //#define OFF  2
 //#define STAR 3          // > off is moving
 //#define SUN  4
-//#define MOON 5       
+//#define MOON 5 
+// RSET 6      
 void menu( int8_t v ){
   
   switch( u_mode ){
      case U_POINT:
         track_selection += v;
-        if( track_selection < HOME ) track_selection = MOON;
-        if( track_selection > MOON ) track_selection = HOME;
+        if( track_selection < HOME ) track_selection = RSET;
+        if( track_selection > RSET ) track_selection = HOME;
         disp_status( track_selection );           // showing selection, but not selected. select is long press
      break;
      case U_GOTO:
@@ -350,13 +314,14 @@ void menu_action( int8_t sw ){          // act on switch press
        case U_POINT:
           tracking = track_selection;
           if( tracking == HOME ) go_home();
-          disp_status( tracking );
+          if( tracking == RSET ) at_home();
+          //disp_status( tracking );
        break;
        case U_GOTO:
           calc_SBO_object( target_star, &target );
           que_goto( &target );
           u_mode = U_POINT;                        // revert to telescope pointing display
-          disp_status( tracking );
+          //disp_status( tracking );
        break;
        case U_RA:               // sync here
        case U_DEC:
@@ -365,7 +330,7 @@ void menu_action( int8_t sw ){          // act on switch press
   }
 
   if( sw == DTAP || sw == TAP ){     // initilize entry to new user mode
-     disp_status( tracking );
+     //disp_status( tracking );
      if( u_mode == U_GOTO ){
         target_star = meridian_star;
         display_stars2( target_star );
@@ -374,13 +339,17 @@ void menu_action( int8_t sw ){          // act on switch press
      }
      // U_RA, U_DEC here !!!
   }
+
+  disp_status( tracking );    // !!! looks like is common to all selections
   
 }
+
 
 
 int meridian_flip( float dest_ha, float dest_dec ){
 static uint8_t state;
 float dest;
+//float dest2;
 
     switch( state ){ 
        case 0:  
@@ -398,13 +367,17 @@ float dest;
    // do we want to move the RA away from the meridian here to avoid scope hitting the tripod?
        case 1:                  // may need to move away from the mount to avoid hitting
           if( telescope.DEC_ < 60.0 && \
-             ( (telescope.side == SIDE_EAST && telescope.HA < 20.0) || \
-             (telescope.side == SIDE_WEST && telescope.HA > -20.0) ) ){
-             dest = ( telescope.side == SIDE_EAST ) ? 20.0 : -20.0 ;
+            ( (telescope.side == SIDE_EAST && telescope.HA < 30.0) || \
+            (telescope.side == SIDE_WEST && telescope.HA > -30.0) ) ){
+             dest = ( telescope.side == SIDE_EAST ) ? 30.0 : -30.0 ;
+             //dest2 = dest;
              dest *=  (float)RA_STEPS_PER_DEGREE;
+             //dest2 *= (float)HA_STEPS_PER_DEGREE;
              dest += telescope.side * 90.0 * (float)RA_STEPS_PER_DEGREE;
+             // dest2 += telescope.side * 90.0 * (float)HA_STEPS_PER_DEGREE;  not offset!
              noInterrupts();
              RAstep.moveTo( dest );
+             //HAstep.moveTo( dest2 );    // attempt at overhead limit fix, but HAstep RAstep not in sync during find.
              finding = 1;
              interrupts();
              state = 2; 
@@ -431,16 +404,109 @@ float dest;
     return state;
 }
 
+// a separate function for GEM mount.  Due to design of dummy scope as driver of all types the overhead limit is often
+// triggered when the physical scope is not really pointing where the dummy scope is.( due to different speeds of dummy stepper
+// and the physical RA stepper.) 
+// also provide safe dec movement with the scope tilted away from the tripod, single axis movements only, slower but safe
+void gem_que_goto( struct POINTING *p ){
+static uint8_t state;
+static struct POINTING *p2;
+static uint32_t tm;
+float more_ha;
+static float save_ha, save_dec;
+float dest2;
+
+   if( state == 0 && p == 0 ) return;     // idle state
+   
+   switch( state ){
+      case 0:
+        if( p ){
+          state =  1;
+          p2 = p;
+          tm = millis();
+          gem_ignore_limits = 1;
+        }
+      break;
+      case 1:
+        state = ( meridian_flip( p2->HA, p2->DEC_ ) == 0 ) ? 3 : 2;
+      break;
+      case 2:
+        if( flipping == 0 ) ++state;
+      break;
+      case 3:
+        save_ha = p2->HA; save_dec = p2->DEC_;
+        p2->DEC_ = telescope.DEC_;
+        p2->HA = ( telescope.side == SIDE_EAST ) ? 30.0 : -30.0 ;   // move mount away from the tripod, dec stays the same
+        goto_target( p2 ), ++state;
+      break;
+      case 4:
+        if( finding == 0 ) ++state;
+      break;
+      case 5:                                // move dec when safe away from the mount, RA stays the same
+        p2->DEC_ = save_dec;
+        goto_target( p2 ), ++state;
+      break;
+      case 6:
+        if( finding == 0 ) ++state;
+      break;
+      case 7:                                // move HA with RA and DEC staying the same, test if RA would be over limit if moved
+        gem_ignore_limits = 0;
+        dest2 = save_ha;
+        dest2 *= (float)HA_STEPS_PER_DEGREE;
+        noInterrupts();
+        HAstep.moveTo( dest2 ); 
+        finding = 1;
+        interrupts();
+        ++state;
+      break;
+      case 8:
+        if( finding == 0 ) ++state;
+      break;
+      case 9:                                // should be just final move of RA axis in toward the mount, drivers off if over limit
+        p2->HA = save_ha;  p2->DEC_ = save_dec;
+        calc_pointing( p2 );
+        goto_target( p2 ), ++state;
+      break;
+      case 10:                            // !!! skips here ????
+        if( finding == 0 ) ++state;
+      case 11:
+         tm = (millis() - tm)/1000;
+         int mn = 0;
+         while ( tm >= 60 ) mn++, tm -= 60;
+         more_ha = to_degrees_ha( 0, mn, tm );
+         p2->HA += more_ha;
+         calc_pointing( p2 );  // re-calc the other positions, alt az etc,(reports side blank in serial log)
+         goto_target( p2 );
+         state = 0;
+         tracking = STAR;      // should we enable tracking after a goto?
+         disp_status(tracking);
+      break;                
+   }
+
+  if( SERIAL_DEBUG ){
+    Serial.print(state);
+    Serial.write(' ');
+  }
+
+}
+
 void que_goto( struct POINTING *p ){
 static uint8_t state;
 static struct POINTING *p2;
 static uint32_t tm;
 float more_ha;
 
+
+   if( mount_type == GEM ){              // separate function for GEM
+      gem_que_goto( p );
+      return;                                       
+   }
+
    if( state == 0 && p == 0 ) return;     // idle state
    //if( p != 0 ) state = 0;                // re-queue when goto is active ? or comment this out
-                                          // re-queue hangs in meridian flip? re-entrant issue maybe
-   switch( state ){
+                                          // re-queue hangs in meridian flip? re-entrant issue maybe 
+                                            
+   switch( state ){        // !!! can remove states 1 and 2 now as GEM is separate
       case 0:              // que the goto
         if( p ){
           state = ( mount_type == GEM ) ? 1 : 3;
@@ -462,12 +528,15 @@ float more_ha;
       break;
       case 5:              // 2nd find for HA delay, meridian flip delay, 
          tm = (millis() - tm)/1000;
-         more_ha = to_degrees_ha( 0, 0, tm );
+         int mn = 0;
+         while ( tm >= 60 ) mn++, tm -= 60;
+         more_ha = to_degrees_ha( 0, mn, tm );
          p2->HA += more_ha;
          calc_pointing( p2 );  // re-calc the other positions, alt az etc,(reports side blank in serial log)
          goto_target( p2 );
          state = 0;
          tracking = STAR;      // should we enable tracking after a goto?
+         disp_status(tracking);
       break;                
    }
 
@@ -479,8 +548,12 @@ float more_ha;
 
 
 void check_limits(){
+uint8_t ok;
 
-  // check if moved past meridian - GEM only
+
+  if( gem_ignore_limits ) return;                    // during goto and flip
+  
+  // check if moved past meridian - GEM only - meridian flip
   if( mount_type == GEM && finding == 0 && flipping == 0 ){
      if( telescope.side == SIDE_WEST && telescope.HA > 1.00 ){        // goto same should flip scope
         target.HA = telescope.HA;
@@ -489,7 +562,34 @@ void check_limits(){
         return;
      }
   }
+
+  ok = 1;
+
+  // horizon limits / overhead limits from ALT
+  // ALT is calculated from HAstep and not RAstep so not valid during find or flip, flip GEM has movement away from overhead before flip
+  // to prevent collision with tripod.  Disable check when finding.  Overhead check only useful for GEM?
+   if( (telescope.ALT < horizon_limit || telescope.ALT > overhead_limit) ) ok = 0;
+   
+  // FORK, GEM, ALT-ALT RA axis limits
+  if( mount_type == GEM && ( telescope.HA < ha_east_limit || telescope.HA > ha_west_limit ) ) ok = 0;
+  if( mount_type == FORK && ( telescope.HA < ha_east_limit || telescope.HA > ha_west_limit ) ) ok = 0;
+  if( mount_type == ALTALT && ( telescope.HAp < ha_east_limit || telescope.HAp > ha_west_limit ) ) ok = 0;
+
+  // ALTALT mount specific dec limits, yoke limits
+  if( mount_type == ALTALT && ( telescope.DECp > alt_north_limit || telescope.DECp < alt_south_limit ) ) ok = 0;
+
+  if( ok ) return;
   
+  // action for exceeding limits - disable drivers, let functions think scope is moving , display message  OVR LIM
+//  noInterrupts();
+//  finding = 0;
+//  interrupts();
+//  tracking = OFF;
+//  set_speeds();                           // turns off stepper movement
+  digitalWrite( DRV_ENABLE, HIGH );
+  LCD.print( (char *)"OVR ",0,ROW0 );
+  LCD.print( (char *)"LMT ",0,ROW1 );
+
 }
 
 
@@ -510,8 +610,8 @@ int v;
 }
 
 
-const char stat[6][5] = {
-  "PWR ", "HOME", "OFF ", "STAR", "SUN ", "MOON" 
+const char stat[7][5] = {
+  "PWR ", "HOME", "OFF ", "STAR", "SUN ", "MOON", "RSET" 
 };
 const char stat2[4][5] = {
   "TRK ", "GOTO", "HA  ", "DEC "
@@ -531,8 +631,6 @@ void disp_status( uint8_t msg ){
        LCD.print( (char *)"*",3*6,ROW1 );
       // LCD.invertText( 0 );
    }
-   
-    
 }
 
 
@@ -616,7 +714,7 @@ int next;
    
    if( sid_hr == bstar[next].hr && sid_mn == bstar[next].mn ){
       meridian_star = next;
-    new_target = next;                          // !!! testing   
+  //  new_target = next;                          // !!! testing   
       if( u_mode == U_POINT ){
         display_stars2( next );
         calc_SBO_object( next, &SBO_object );          //!!! diff object for this?
