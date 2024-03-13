@@ -61,6 +61,7 @@ uint8_t sid_hr, sid_mn, sid_sec;     // local sidereal time
 volatile uint8_t finding;            // goto started
 uint8_t flipping;                    // GEM meridian flip in progress
 uint8_t gem_ignore_limits;           // GEM intermediate movements, meridian flip
+uint8_t over_limit;                  // over limit in finding movements, clear with reset
 
 
 // jobs run on timers
@@ -122,15 +123,15 @@ void setup() {
   DECstep.setAcceleration( 500.0 );
   DECstep.setMinPulseWidth( 3 );
   DECstep.setPinsInverted( DECreverse,0,0);
-  HAstep.setAcceleration( 1000.0 );            // fake motor, do not enable output(s). using accelstepper to provide tracking rates
+  HAstep.setAcceleration( 5000.0 );            // fake motor, do not enable output(s). using accelstepper to provide tracking rates
   HAstep.setMinPulseWidth( 1 );
-  DCstep.setAcceleration( 1000.0 );            // fake motor, do not enable output(s)
+  DCstep.setAcceleration( 5000.0 );            // fake motor, do not enable output(s)
   DCstep.setMinPulseWidth( 1 );
   
   DECstep.enableOutputs();
   RAstep.enableOutputs();
   pinMode( DRV_ENABLE, OUTPUT );
-  digitalWrite( DRV_ENABLE, LOW );    // enable low
+  //digitalWrite( DRV_ENABLE, LOW );    // enable low, enable elsewhere when tracking is enabled
 
   // timer running at 1ms. Max speed will be timer limited at 1000.
   // step mode 16, 200 step motor  18.75 rpm max or 3.2 seconds for one rotation
@@ -138,8 +139,8 @@ void setup() {
   // double again to 0.25 ms, max 4000 steps/sec
   RAstep.setMaxSpeed( 5010.0 );    // need to be last in order to work at all?
   DECstep.setMaxSpeed( 5010.0 );
-  HAstep.setMaxSpeed( 5010.0 );    // !!! revisit
-  DCstep.setMaxSpeed( 5010 ); 
+  HAstep.setMaxSpeed( 9010.0 );    // !!! revisit
+  DCstep.setMaxSpeed( 9010 ); 
 
   // moveTo( position relative to zero starting position ) for goto's
   // move( relative to the current position );
@@ -249,10 +250,12 @@ int8_t t2;
       finding_count = t;
       que_goto( 0 );
       if( flipping ) meridian_flip( 0.0,0.0 );
+      if( PLOT_DEBUG ) serial_plot_pointing( &telescope );
    }
 
    if( power_fail == 0 && t - vtest_count >= 971 ) vtest_count = t, vtest();
-   if( t - limit_count >= 1003 ){
+   
+   if( t - limit_count >= 2003 ){               // slow to allow tracking menu to sort of function
       limit_count = t;
       check_limits();
    }
@@ -385,7 +388,7 @@ float dest;
           else state = 3;   
        break;
        case 2:
-         if( finding == 0 ) ++state, Serial.print("Here...");         // !!! remove the serial print
+         if( finding == 0 ) ++state;    // Serial.print("Here...");         // !!! remove the serial print
        break;     
        case 3:
          go_home_GEM();   // in pointing.h
@@ -464,11 +467,12 @@ float dest2;
       break;
       case 9:                                // should be just final move of RA axis in toward the mount, drivers off if over limit
         p2->HA = save_ha;  p2->DEC_ = save_dec;
-        calc_pointing( p2 );
+        //calc_pointing( p2 );
         goto_target( p2 ), ++state;
       break;
-      case 10:                            // !!! skips here ????
+      case 10:
         if( finding == 0 ) ++state;
+      break;  
       case 11:
          tm = (millis() - tm)/1000;
          int mn = 0;
@@ -581,12 +585,15 @@ uint8_t ok;
   if( ok ) return;
   
   // action for exceeding limits - disable drivers, let functions think scope is moving , display message  OVR LIM
-//  noInterrupts();
-//  finding = 0;
-//  interrupts();
-//  tracking = OFF;
-//  set_speeds();                           // turns off stepper movement
-  digitalWrite( DRV_ENABLE, HIGH );
+  if( finding ){
+    digitalWrite( DRV_ENABLE, HIGH );       // disable drivers, let finding state code complete, recover with scope reset
+    over_limit = 1;
+  }
+  //else{
+    tracking = OFF;                          // stop telescope movement
+    //set_speeds();                          // seems to hang goto state 10, distance to go must be non zero and not moving
+  //}
+  
   LCD.print( (char *)"OVR ",0,ROW0 );
   LCD.print( (char *)"LMT ",0,ROW1 );
 

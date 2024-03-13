@@ -6,7 +6,8 @@
 //   Alt Az
 //   Alt Alt or Lazy Yoke
 
-#define SERIAL_DEBUG 1    // turn serial printing on or off
+#define SERIAL_DEBUG 0    // turn serial printing on or off
+#define PLOT_DEBUG  1     // output stepper values for arduino plotter
 
 #define R2D 57.2958       // degrees in a radian
 
@@ -16,6 +17,7 @@ float to_degrees_ha( int8_t hr, int8_t mn, int8_t sc );
 void serial_display_pointing(struct POINTING *p);
 void goto_target( struct POINTING *p );
 void go_home_GEM();
+void serial_plot_pointing( struct POINTING *p);
 
 
 struct POINTING {
@@ -109,6 +111,7 @@ float TH, PHi, x, y, z, xp, yp, zp;
     p->HAp_rate = cos( m_lat) - tan( 90/R2D - TH) * sin(m_lat) * cos( PHi);
 
     if( SERIAL_DEBUG ) serial_display_pointing( p );
+    //if( PLOT_DEBUG ) serial_plot_pointing( p );
 }
 
 void calc_telescope( struct POINTING *p ){
@@ -201,7 +204,7 @@ float sps;
       //DCstep.setSpeed( DCspeed );      // always zero I think
    interrupts();
 
-     
+   if( over_limit == 0 && ( tracking == SUN || tracking == MOON || tracking == STAR )) digitalWrite( DRV_ENABLE, LOW );  // enable
 }
 
 #ifdef NOWAY
@@ -345,9 +348,9 @@ static int holdoff;      // display meridian star longer than 5 seconds
   if( p->ALT > overhead_limit ) LCD.invertText(1);          // exceed limits, goto will fail
   LCD.print((char *)"Alt : ", 0, ROW3 );
   LCD.invertText(0);
-  LCD.printNumF( p->ALT, 2, 7*6, ROW3, '.', 5 );
+  LCD.printNumF( p->ALT, 2, 7*6, ROW3, '.', 5 );   LCD.putch(' ');
   LCD.print((char *)"Az  : ", 0, ROW4 );
-  LCD.printNumF( p->AZ, 2, 7*6, ROW4, '.', 5 );
+  LCD.printNumF( p->AZ, 2, 7*6, ROW4, '.', 5 );    LCD.putch(' ');
   
   LCD.print((char *)"HA  : ", 0, ROW5 );
   LCD.putch( sn );
@@ -410,6 +413,23 @@ long hc,rc,dc,dec;
    Serial.println();
 }
 
+
+void serial_plot_pointing( struct POINTING *p){    // print numbers for arduino plotting tool
+long hc,rc,dc,dec;
+
+   noInterrupts();
+   hc = HAstep.currentPosition();
+   rc = RAstep.currentPosition();
+   dc = DCstep.currentPosition();
+   dec = DECstep.currentPosition();
+   interrupts();
+    Serial.print(hc);  Serial.write(' ');
+    Serial.print(dc);  Serial.write(' ');
+    Serial.print(rc);  Serial.write(' ');
+    Serial.print(dec);  Serial.write(' ');
+    Serial.println();
+
+}
   
 void at_home(){                         // !!! revisit these setups for each type in mount_type, are they correct?
 long ha,ra,dc,dec;                      // !!! turn off tracking here ?
@@ -451,7 +471,8 @@ long ha,ra,dc,dec;                      // !!! turn off tracking here ?
      RAstep.setCurrentPosition( ra );
   interrupts();
   
-  digitalWrite( DRV_ENABLE, LOW );   // enable steppers, recover from over limit steppers off with reset command
+  digitalWrite( DRV_ENABLE, HIGH );   // disable steppers
+  over_limit = 0;                     // recover from overlimit during goto with a scope reset
 
 
 }
