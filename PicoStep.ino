@@ -70,6 +70,7 @@ uint32_t sidereal_count;             // update sidereal time and display
 uint32_t finding_count;
 uint32_t limit_count;
 
+int slew_rate = 100;
 uint8_t power_fail;                  // latched error condition
 uint8_t track_selection = RSET;
 uint8_t tracking = RSET;
@@ -79,7 +80,8 @@ uint8_t tracking = RSET;
 #define U_GOTO  1                // select a database object with encoder and goto on long press
 #define U_RA    2                // alter RA with encoder, move scope
 #define U_DEC   3                // alter DEC with encoder, move scope
-uint8_t u_mode = U_POINT;        // user interface mode1
+#define U_TIME  4                // set UTC time, DTAP to enter from U_POINT
+int8_t u_mode = U_POINT;         // user interface mode1
 
 //int new_target, old_target=400;      // testing vars currently
 int meridian_star;               // database star/object crossing meridian
@@ -94,6 +96,7 @@ float HAspeed, RAspeed, DCspeed, DECspeed;
 
 #include "Pointing.h"            // more program code
 #include "Encoder.h"
+#include "command.h"
 
 
 
@@ -102,6 +105,7 @@ void setup() {
   delay(200);
   i2init();
   Serial.begin(9600);
+  Serial1.begin(9600);
 
   LCD.InitLCD();
   LCD.setFont(SmallFont);
@@ -142,29 +146,13 @@ void setup() {
   HAstep.setMaxSpeed( 9010.0 );    // !!! revisit
   DCstep.setMaxSpeed( 9010 ); 
 
-  // moveTo( position relative to zero starting position ) for goto's
+  // moveTo( absolute position ) for goto's
   // move( relative to the current position );
   // setCurrentPosition( for fixups )
-  //RAstep.moveTo( -1 );                 // checking if alive
-  //DECstep.moveTo( 1 );                 // !!! should init to home position rather than zero
-    // !!! init using the fake rate
-  //telescope.DEC_ = 90.0;
-  // !!! should be calling the at home function here !!!
-  //DCstep.setCurrentPosition( DC_STEPS_PER_DEGREE * 90L );       // at 90 degree
-  //if( mount_type == GEM ){
-  //   telescope.side = SIDE_EAST;
-     ////RAstep.setCurrentPosition( RA_STEPS_PER_DEGREE * 90L );
-     ////HAstep.setCurrentPosition( HA_STEPS_PER_DEGREE * 90L );
-     //// start at zero HA and mount disconnected from RA
-     //// mount points 90 deg in dec and that is the zero step position
-  //}
-  //else DECstep.setCurrentPosition( DEC_STEPS_PER_DEGREE * 90L );
-
+ 
   at_home();
   calc_telescope( &telescope);
   
-  //finding = 1;                         // !!! ?? flag goto in progress, turns on sidereal rate
-
   ITimer0.attachInterruptInterval(250, TimerHandler0);   // time in us, 1000 == 1ms, 500 = 0.5ms
 
   disp_status(tracking);
@@ -192,7 +180,6 @@ bool TimerHandler0(struct repeating_timer *t){
   // distanceToGo uses the old target, can't call it to see if need to call run or
   // runSpeed.  If run is called when not goto'ing it will try to move to the old target.
   // So need a flag ( finding ) to control what function to call.
-  // !!! what about time lost during a goto, need to catch up. 2nd find?, update finding target during find?
   if( finding ){
      RAstep.run();
      DECstep.run();
@@ -261,9 +248,17 @@ int8_t t2;
    }
  
    t2 = encoder();
-   if( t2 ) menu( t2 );
+   if( t2 ) menu( (int)t2 );
    t2 = switches();
    if( t2 >= TAP ) menu_action(t2), sstate[0] = DONE;
+
+
+   while( Serial1.available() ){    // !!! testing bluetooth
+      char ch = Serial1.read();
+      Serial.write(ch);
+     // if( ch == '#' ) Serial.println();
+      command_in( ch );
+   }
 
    
 }
@@ -274,11 +269,12 @@ int8_t t2;
 //#define POWER_FAIL 0
 //#define HOME 1
 //#define OFF  2
-//#define STAR 3          // > off is moving
+//#define STAR 3 
 //#define SUN  4
 //#define MOON 5 
 // RSET 6      
-void menu( int8_t v ){
+void menu( int v ){
+int dist;
   
   switch( u_mode ){
      case U_POINT:
@@ -296,21 +292,50 @@ void menu( int8_t v ){
         display_pointing( &SBO_object );                
      break;
      case U_RA:
+        // move scope relative to current position, calc new offset, scope may have been moving ? need distance to go also
+        // need to end up at correct offset, need to set all steppers or they move to the last goto position
+        noInterrupts();
+        dist = RAstep.distanceToGo() + slew_rate*v;
+        RAstep.move(dist);
+        HAstep.move( 0 );
+        DCstep.move( 0 );
+        DECstep.move( 0 );
+        finding = 1;
+        interrupts();
+        telescope.RAoffset += slew_rate*v;
+        disp_RAoffset();
      break;
      case U_DEC:
+        // move scope relative
+        noInterrupts();
+        dist = DECstep.distanceToGo() + slew_rate*v;
+        DECstep.move(dist);
+        HAstep.move( 0 );
+        DCstep.move( 0 );
+        RAstep.move( 0 );
+        finding = 1;
+        interrupts();
+        telescope.DECoffset += slew_rate*v;
+        disp_DECoffset();
      break;
      // add a UTC time adjust mode ?
   }
 }
 
+void LCD_clear_rows( uint8_t s, uint8_t e ){
+int i;
+
+   for( i = s; i <= e; ++i ) LCD.clrRow(i);
+}
+
+
 void menu_action( int8_t sw ){          // act on switch press
-  // when leaving U_POINT, display_status tracking or have a timeout and display actual status
 
   if( sw == TAP ){
-     if( ++u_mode > U_DEC ) u_mode = U_DEC;       // or have tap go back to U_RA
+     if( ++u_mode > U_DEC ) u_mode = U_POINT;       // wrap back to start, skip U_TIME
   }
   else if( sw == DTAP ){
-     if( --u_mode < U_POINT ) u_mode = U_POINT;
+     if( --u_mode < U_POINT ) u_mode = U_TIME;     // somewhat hidden menu adjust UTC time
   }
   else if( sw == LONGP ){
      switch( u_mode ){
@@ -326,27 +351,62 @@ void menu_action( int8_t sw ){          // act on switch press
           u_mode = U_POINT;                        // revert to telescope pointing display
           //disp_status( tracking );
        break;
-       case U_RA:               // sync here
-       case U_DEC:
+       case U_RA:
+          slew_rate *= 10;
+          if( slew_rate > 1000 ) slew_rate = 10;
+          LCD.printNumI( slew_rate, RIGHT, ROW7, 4, ' ' );
+       break;
+       case U_DEC:      // sync here
+       break;
+       case U_TIME:
        break;
      }
   }
 
   if( sw == DTAP || sw == TAP ){     // initilize entry to new user mode
-     //disp_status( tracking );
+     LCD_clear_rows( 2, 7 );
      if( u_mode == U_GOTO ){
         target_star = meridian_star;
         display_stars2( target_star );
         calc_SBO_object( target_star, &SBO_object );
         display_pointing( &SBO_object );        
      }
-     // U_RA, U_DEC here !!!
+     if( u_mode == U_RA ){
+      // LCD_clear_rows( 2, 7 );
+       LCD.print((char *)"--RA or AZ--",CENTER,ROW2 );
+       LCD.print((char *)"Long - Slew Rate",LEFT,ROW7 );
+       LCD.printNumI( slew_rate, RIGHT, ROW7, 4, ' ' );
+       disp_RAoffset();
+     }
+     if( u_mode == U_DEC ){
+      // LCD_clear_rows( 2, 7 );
+       LCD.print((char *)"--DEC or ALT--",CENTER,ROW2 );
+       LCD.print((char *)"Long - Sync Here",LEFT,ROW7 );
+       disp_DECoffset();
+     }
+
   }
 
-  disp_status( tracking );    // !!! looks like is common to all selections
+  disp_status( tracking );    //  looks like is common to all selections
   
 }
 
+
+void disp_RAoffset( ){        // telescope offset
+
+  LCD.setFont(MediumNumbers);
+  LCD.printNumI( telescope.RAoffset,LEFT,ROW4,7,'/' );
+  LCD.setFont(SmallFont);
+  
+}
+
+void disp_DECoffset( ){       // telescope offset
+
+  LCD.setFont(MediumNumbers);
+  LCD.printNumI( telescope.DECoffset,LEFT,ROW4,7,'/' );
+  LCD.setFont(SmallFont);
+  
+}
 
 
 int meridian_flip( float dest_ha, float dest_dec ){
@@ -373,14 +433,13 @@ float dest;
             ( (telescope.side == SIDE_EAST && telescope.HA < 30.0) || \
             (telescope.side == SIDE_WEST && telescope.HA > -30.0) ) ){
              dest = ( telescope.side == SIDE_EAST ) ? 30.0 : -30.0 ;
-             //dest2 = dest;
              dest *=  (float)RA_STEPS_PER_DEGREE;
-             //dest2 *= (float)HA_STEPS_PER_DEGREE;
              dest += telescope.side * 90.0 * (float)RA_STEPS_PER_DEGREE;
-             // dest2 += telescope.side * 90.0 * (float)HA_STEPS_PER_DEGREE;  not offset!
              noInterrupts();
              RAstep.moveTo( dest );
-             //HAstep.moveTo( dest2 );    // attempt at overhead limit fix, but HAstep RAstep not in sync during find.
+             HAstep.move( 0 );
+             DCstep.move( 0 );
+             DECstep.move( 0 );
              finding = 1;
              interrupts();
              state = 2; 
@@ -457,7 +516,10 @@ float dest2;
         dest2 = save_ha;
         dest2 *= (float)HA_STEPS_PER_DEGREE;
         noInterrupts();
-        HAstep.moveTo( dest2 ); 
+        HAstep.moveTo( dest2 );
+        RAstep.move( 0 );
+        DCstep.move( 0 );
+        DECstep.move( 0 ); 
         finding = 1;
         interrupts();
         ++state;
@@ -562,6 +624,8 @@ uint8_t ok;
      if( telescope.side == SIDE_WEST && telescope.HA > 1.00 ){        // goto same should flip scope
         target.HA = telescope.HA;
         target.DEC_ = telescope.DEC_;
+        //target.RAoffset = telescope.RAoffset;  !!! separate east and west offsets for GEM or recalc?
+        //target.DECoffset = telescope.DECoffset;
         que_goto( &target );
         return;
      }
@@ -589,10 +653,9 @@ uint8_t ok;
     digitalWrite( DRV_ENABLE, HIGH );       // disable drivers, let finding state code complete, recover with scope reset
     over_limit = 1;
   }
-  //else{
-    tracking = OFF;                          // stop telescope movement
-    //set_speeds();                          // seems to hang goto state 10, distance to go must be non zero and not moving
-  //}
+  
+  tracking = OFF;                          // stop telescope movement
+  //set_speeds();                          // seems to hang goto state 10, distance to go must be non zero and not moving
   
   LCD.print( (char *)"OVR ",0,ROW0 );
   LCD.print( (char *)"LMT ",0,ROW1 );
@@ -620,8 +683,8 @@ int v;
 const char stat[7][5] = {
   "PWR ", "HOME", "OFF ", "STAR", "SUN ", "MOON", "RSET" 
 };
-const char stat2[4][5] = {
-  "TRK ", "GOTO", "HA  ", "DEC "
+const char stat2[5][5] = {
+  "TRK ", "GOTO", "HA  ", "DEC ", "TIME"
 };
 
 // write to status area of the screen, top lines, left side

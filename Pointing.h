@@ -6,8 +6,8 @@
 //   Alt Az
 //   Alt Alt or Lazy Yoke
 
-#define SERIAL_DEBUG 0    // turn serial printing on or off
-#define PLOT_DEBUG  1     // output stepper values for arduino plotter
+#define SERIAL_DEBUG 0    // turn serial text printing on or off
+#define PLOT_DEBUG   0    // OR output stepper values for arduino plotter
 
 #define R2D 57.2958       // degrees in a radian
 
@@ -32,6 +32,8 @@ struct POINTING {
    float HAp;
    float DECp_rate;
    float HAp_rate;
+   long  RAoffset;      // step count offsets from where we think we are pointing, sync here
+   long  DECoffset;
 };
 
 struct POINTING telescope;
@@ -204,70 +206,9 @@ float sps;
       //DCstep.setSpeed( DCspeed );      // always zero I think
    interrupts();
 
-   if( over_limit == 0 && ( tracking == SUN || tracking == MOON || tracking == STAR )) digitalWrite( DRV_ENABLE, LOW );  // enable
+   if( power_fail == 0 && over_limit == 0 && ( tracking == SUN || tracking == MOON || tracking == STAR ))
+       digitalWrite( DRV_ENABLE, LOW );  // enable
 }
-
-#ifdef NOWAY
-// test and impliment meridian flip 
-int meridian_flip_old( int state, struct POINTING *p ){
-static struct POINTING *p2;
-static float save_ha, save_dec;
-uint32_t tm;
-float more_ha;
-
-   // state 0, test, 1 - 1st move, 2 - 2nd move 3 - flip and goto_target the saved pointer
-   // !!! should state be an argument or just a global, will need a global anyway
-   // !!! how to add to ha, same as below ?
-   // !!! maybe should just impliment a goto home here
-
-   switch( state ){
-      case 0:            // test if need a flip
-        if( p->HA >= 0.0 && telescope.side == SIDE_EAST ) return 0;
-        if( p->HA < 0.0 && telescope.side == SIDE_WEST && p->DEC_ > 0.0 ) return 0;    // want side east for low southeast
-        if( p->HA < 0.0 && telescope.side == SIDE_EAST && p->DEC_ <= 0.0 ) return 0;
-        // need to flip
-        flipping = 1;
-        p2 = p;
-        save_ha = p2->HA;   save_dec = p2->DEC_;
-        tm = millis();
-        return flipping;
-      break;
-      case 1:            // move in ra away from mount before moving dec
-        if( telescope.side == SIDE_EAST && telescope.HA < 20.0 ) p2->HA = 20.0 * telescope.side;
-        else if( telescope.side == SIDE_WEST && telescope.HA > -20.0 ) p2->HA = 20.0 * telescope.side;
-        else p2->HA = telescope.HA;        // no movement
-        p2->DEC_ = telescope.DEC_;
-        ++flipping;
-      break;
-      case 2:            // move to home position
-        p2->HA = 90.0 * telescope.side;
-        //p2->HA = 0.0;
-        p2->DEC_ = 90.0;
-        ++flipping;
-      break;
-      case 3:            // flip and goto
-        p2->HA = save_ha;   p2->DEC_ = save_dec;
-        telescope.side = ( telescope.side == SIDE_EAST ) ? SIDE_WEST : SIDE_EAST;
-        noInterrupts();
-        RAstep.setCurrentPosition( telescope.side * RA_STEPS_PER_DEGREE * 90L );
-        HAstep.setCurrentPosition( telescope.side * HA_STEPS_PER_DEGREE * 90L );
-        interrupts();
-        flipping = 0;
-      break;
-   }
-
-   if( flipping == 0 ){             // add missing time
-       tm = (millis() - tm)/1000;
-       more_ha = to_degrees_ha( 0, 0, tm );
-       p2->HA += more_ha;
-       // re-calc the other positions, alt az etc
-       //calc_pointing( p2 );
-   }
-
-   goto_target( p2 );
-   return flipping;
-}
-#endif
 
 
 void goto_target( struct POINTING *p2 ){
@@ -299,7 +240,12 @@ long ha,ra,dc,dec;
         dec = p2->DECp * (float)DEC_STEPS_PER_DEGREE;
       break;  
    }
-    
+
+   ra += p2->RAoffset;            // stepper offsets from calculated position
+   dec += p2->DECoffset;
+   telescope.RAoffset = p2->RAoffset;   // !!! is this going to work?
+   telescope.DECoffset = p2->DECoffset;
+   
       noInterrupts();
       HAstep.moveTo( ha );       
       RAstep.moveTo( ra );        // hour angle, west positive here
@@ -318,7 +264,10 @@ float sid,ra,ha,dec;
 char sn = ' ';
 static int holdoff;      // display meridian star longer than 5 seconds
 
-  if( u_mode >= U_RA ) return;            // LCD screen in use by other user screens
+  if( u_mode >= U_RA ){
+      //holdoff = 1;       // recover screen display quicker after mode change !!! didn't work, no calls to here unless proper mode
+      return;            // LCD screen in use by other user screens
+  }
   
   if( holdoff ){
      --holdoff;
@@ -328,6 +277,12 @@ static int holdoff;      // display meridian star longer than 5 seconds
      }
      else if( p == &telescope ) return;
   }
+
+  if( p == &telescope && mount_type == GEM ){
+    if( telescope.side == SIDE_EAST ) LCD.print((char *)"E",LEFT,ROW2 ), LCD.print((char *)" ",RIGHT,ROW2);
+    else LCD.print((char *)"W",RIGHT,ROW2) , LCD.print((char *)" ",LEFT,ROW2 );
+  }
+
 
   sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
   ra = sid - p->HA;
@@ -416,7 +371,9 @@ long hc,rc,dc,dec;
 
 void serial_plot_pointing( struct POINTING *p){    // print numbers for arduino plotting tool
 long hc,rc,dc,dec;
+long alt;
 
+   alt = p->ALT * (float)DEC_STEPS_PER_DEGREE;    // scale to the other numbers, a->ALT updates each 5 seconds, step waveform results
    noInterrupts();
    hc = HAstep.currentPosition();
    rc = RAstep.currentPosition();
@@ -427,6 +384,7 @@ long hc,rc,dc,dec;
     Serial.print(dc);  Serial.write(' ');
     Serial.print(rc);  Serial.write(' ');
     Serial.print(dec);  Serial.write(' ');
+    Serial.print(alt);  
     Serial.println();
 
 }
@@ -519,3 +477,67 @@ float sign;
    return sign * deg;
   
 }
+
+
+
+#ifdef NOWAY
+// test and impliment meridian flip 
+int meridian_flip_old( int state, struct POINTING *p ){
+static struct POINTING *p2;
+static float save_ha, save_dec;
+uint32_t tm;
+float more_ha;
+
+   // state 0, test, 1 - 1st move, 2 - 2nd move 3 - flip and goto_target the saved pointer
+   // !!! should state be an argument or just a global, will need a global anyway
+   // !!! how to add to ha, same as below ?
+   // !!! maybe should just impliment a goto home here
+
+   switch( state ){
+      case 0:            // test if need a flip
+        if( p->HA >= 0.0 && telescope.side == SIDE_EAST ) return 0;
+        if( p->HA < 0.0 && telescope.side == SIDE_WEST && p->DEC_ > 0.0 ) return 0;    // want side east for low southeast
+        if( p->HA < 0.0 && telescope.side == SIDE_EAST && p->DEC_ <= 0.0 ) return 0;
+        // need to flip
+        flipping = 1;
+        p2 = p;
+        save_ha = p2->HA;   save_dec = p2->DEC_;
+        tm = millis();
+        return flipping;
+      break;
+      case 1:            // move in ra away from mount before moving dec
+        if( telescope.side == SIDE_EAST && telescope.HA < 20.0 ) p2->HA = 20.0 * telescope.side;
+        else if( telescope.side == SIDE_WEST && telescope.HA > -20.0 ) p2->HA = 20.0 * telescope.side;
+        else p2->HA = telescope.HA;        // no movement
+        p2->DEC_ = telescope.DEC_;
+        ++flipping;
+      break;
+      case 2:            // move to home position
+        p2->HA = 90.0 * telescope.side;
+        //p2->HA = 0.0;
+        p2->DEC_ = 90.0;
+        ++flipping;
+      break;
+      case 3:            // flip and goto
+        p2->HA = save_ha;   p2->DEC_ = save_dec;
+        telescope.side = ( telescope.side == SIDE_EAST ) ? SIDE_WEST : SIDE_EAST;
+        noInterrupts();
+        RAstep.setCurrentPosition( telescope.side * RA_STEPS_PER_DEGREE * 90L );
+        HAstep.setCurrentPosition( telescope.side * HA_STEPS_PER_DEGREE * 90L );
+        interrupts();
+        flipping = 0;
+      break;
+   }
+
+   if( flipping == 0 ){             // add missing time
+       tm = (millis() - tm)/1000;
+       more_ha = to_degrees_ha( 0, 0, tm );
+       p2->HA += more_ha;
+       // re-calc the other positions, alt az etc
+       //calc_pointing( p2 );
+   }
+
+   goto_target( p2 );
+   return flipping;
+}
+#endif
