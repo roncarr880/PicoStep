@@ -39,6 +39,8 @@ struct POINTING {
 struct POINTING telescope;
 struct POINTING target;
 struct POINTING SBO_object;
+struct POINTING target2;             // serial command goto object
+struct BSTAR tstar;                  // target2 info
                                  
 // update a pointing struct
 void calc_pointing( struct POINTING *p ){   
@@ -155,6 +157,25 @@ float dec, ra, ha, sid;
       p->DEC_ = dec;
 
    calc_pointing( p );
+}
+
+void calc_ext_object( struct POINTING *p ){       // usually p will be target2
+float dec, ra, ha, sid;
+  
+   get_GMT_base( SERIAL_DEBUG );
+   
+            // get position from database object
+      dec = to_degrees_dec( tstar.dd, tstar.dm, tstar.ds );
+      ra  = to_degrees_ha( tstar.hr, tstar.mn, tstar.sc );
+      sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );
+      ha = sid - ra;                     // ra_hr = sid_hr - ha_hr;
+      if( ha > 180.0 ) ha -= 360.0;
+      if( ha <= -180.0 ) ha += 360.0; 
+      p->HA = ha;
+      p->DEC_ = dec;
+
+   calc_pointing( p );     
+  
 }
 
 // set speeds if tracking, from telescope 

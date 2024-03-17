@@ -60,6 +60,7 @@ DateTime today;
 uint8_t sid_hr, sid_mn, sid_sec;     // local sidereal time
 volatile uint8_t finding;            // goto started
 uint8_t flipping;                    // GEM meridian flip in progress
+uint8_t ext_finding;                 // for phone app
 uint8_t gem_ignore_limits;           // GEM intermediate movements, meridian flip
 uint8_t over_limit;                  // over limit in finding movements, clear with reset
 
@@ -253,11 +254,13 @@ int8_t t2;
    if( t2 >= TAP ) menu_action(t2), sstate[0] = DONE;
 
 
-   while( Serial1.available() ){    // !!! testing bluetooth
+   while( Serial1.available() ){
       char ch = Serial1.read();
-      Serial.write(ch);
-     // if( ch == '#' ) Serial.println();
-      command_in( ch );
+      command_in1( ch );
+   }
+   while( Serial.available() ){
+     char ch = Serial.read();
+     command_in0( ch );
    }
 
    
@@ -487,6 +490,7 @@ float dest2;
           p2 = p;
           tm = millis();
           gem_ignore_limits = 1;
+          ext_finding = 1;
         }
       break;
       case 1:
@@ -546,6 +550,7 @@ float dest2;
          state = 0;
          tracking = STAR;      // should we enable tracking after a goto?
          disp_status(tracking);
+         ext_finding = 0;
       break;                
    }
 
@@ -578,6 +583,7 @@ float more_ha;
           state = ( mount_type == GEM ) ? 1 : 3;
           p2 = p;
           tm = millis();
+          ext_finding = 1;
         }
       break;
       case 1:              // meridian flip needed?
@@ -603,6 +609,7 @@ float more_ha;
          state = 0;
          tracking = STAR;      // should we enable tracking after a goto?
          disp_status(tracking);
+         ext_finding = 0;
       break;                
    }
 
