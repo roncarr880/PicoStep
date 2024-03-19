@@ -18,6 +18,7 @@ void serial_display_pointing(struct POINTING *p);
 void goto_target( struct POINTING *p );
 void go_home_GEM();
 void serial_plot_pointing( struct POINTING *p);
+extern void apply_offsets( struct POINTING *p );
 
 
 struct POINTING {
@@ -140,6 +141,8 @@ float ha, dec;
    
 }
 
+
+//  add getting the sync offsets to this and ext_object
 void calc_SBO_object( int obj, struct POINTING *p ){
 float dec, ra, ha, sid;
 
@@ -157,6 +160,7 @@ float dec, ra, ha, sid;
       p->DEC_ = dec;
 
    calc_pointing( p );
+   apply_offsets( p ); 
 }
 
 void calc_ext_object( struct POINTING *p ){       // usually p will be target2
@@ -175,7 +179,7 @@ float dec, ra, ha, sid;
       p->DEC_ = dec;
 
    calc_pointing( p );     
-  
+   apply_offsets( p ); 
 }
 
 // set speeds if tracking, from telescope 
@@ -264,7 +268,7 @@ long ha,ra,dc,dec;
 
    ra += p2->RAoffset;            // stepper offsets from calculated position
    dec += p2->DECoffset;
-   telescope.RAoffset = p2->RAoffset;   // !!! is this going to work?
+   telescope.RAoffset = p2->RAoffset;
    telescope.DECoffset = p2->DECoffset;
    
       noInterrupts();

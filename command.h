@@ -53,6 +53,7 @@ static char cmd[44];
       return;
    }
 
+   if( c < ' ' ) return;        // strip cr lf if any
    cmd[in++] = c;
    if( in >= 39 ) in = 0;    
    cmd[in] = 0;
@@ -77,6 +78,7 @@ static char cmd[44];
       return;
    }
 
+   if( c < ' ' ) return;
    cmd[in++] = c;
    if( in >= 39 ) in = 0;    
    cmd[in] = 0;
@@ -86,6 +88,8 @@ static char cmd[44];
 
 
 void process_command(){
+static uint8_t A1;
+static uint8_t CS;
 
   if( match( "GU" )) get_status();
   if( match( "GVN" )) reply_command((char *)"3.16o#");
@@ -93,7 +97,7 @@ void process_command(){
   if( match( "GD" )) get_DEC();
   if( match( "GT" )){
      if( tracking == STAR ) reply_command((char *)"01.00274#");      // zero unless STAR !!!
-     else if( tracking == MOON ) reply_command((char *)"00.94000#");
+     else if( tracking == MOON ) reply_command((char *)"00.97900#");  
      else if( tracking == SUN ) reply_command((char *)"01.00000#");
      //else reply_command((char *)"00.00000#");
      else reply_command((char *)"0#");
@@ -105,23 +109,54 @@ void process_command(){
   if( match( "GX9C" )) unknown();
   if( match( "GX9E" )) unknown();
   if( match( "GXEE" )) reply_command((char *)"0#");
-  if( match( "Gt" )) get_latitude();
-  if( match( "Gg" )) get_longitude();
+  if( match( "Gt" )) get_latitude(),CS = 1;
+  if( match( "Gg" )) get_longitude(), CS = 2;
+  if( match( "GG" ) ) reply_command((char *)"+00#");     // we use UTC time rather than local
+  if( match( "GS" )) sidereal_time();
+  if( match( "Gm" )){
+       if( telescope.side == SIDE_EAST ) reply_command((char *)"E#");
+       else if( telescope.side == SIDE_WEST ) reply_command((char *)"W#");
+       else reply_command((char *)"N#");
+  }
+     // reply[0] = '0' + ALIGN_MAX_NUM_STARS;
+     // reply[1] = '0' + alignState.currentStar;
+     // reply[2] = '0' + alignState.lastStar;
+     // reply[3] = 0;
+  if( match( "A1" )) A1 = 1, success();
   if( match( "A?" )){
-    reply_command( (char *)"411#");   // alighnment status under goto, stars progress
+    if( A1 == 1 ) reply_command( (char *)"411#");
+    else if( A1 == 2 ) reply_command((char *)"421#");
+    else reply_command( (char *)"401#");   // alignment status under goto, stars progress ? 401 to 411?
   }
   if( matchn( "Sr", 2 )) Sr();    //  goto RA 
   if( matchn( "Sd", 2 )) Sd();    //  goto DEC
-  if( match( "MS" ) ) ext_goto(); // start slew, 0 is success, 1<toolow>#,2<toohigh># exceeds limits
-  if( match( "GG" ) ) reply_command((char *)"+00#");     // we use UTC time rather than local
+  if( match( "MS" ) ) ext_goto(), CS = 3; // start slew, 0 is success, 1<toolow>#,2<toohigh># exceeds limits
   if( matchn( "SC", 2 )) set_date();
   if( matchn( "SL", 2 )) set_time();
-  if( match( "GS" )) sidereal_time();
   if( match( "TL" )) tracking = MOON;
   if( match( "TS" )) tracking = SUN;
   if( match( "TQ" )) tracking = STAR;
   if( match( "Td" )) tracking = OFF, success();
   if( match( "Te" )) tracking = STAR, success();
+  if( match( "Me" )) slew_east = 1, slew_time = millis();     // actual slew control in main - PicoStep
+  if( match( "Mw" )) slew_west = 1, slew_time = millis();
+  if( match( "Mn" )) slew_north = 1, slew_time = millis();
+  if( match( "Ms" )) slew_south = 1, slew_time = millis();
+  if( match( "Qe" )) slew_east = 0, CS = 4;  
+  if( match( "Qw" )) slew_west = 0, CS = 4;  
+  if( match( "Qn" )) slew_north = 0, CS = 4;  
+  if( match( "Qs" )) slew_south = 0, CS = 4;
+  if( match( "hC" )) go_home();  // go home
+  if( match( "hF" )) at_home();  // at home
+  // var state CS 0-?, 1-got RA, 2-got DEC, 3-goto, 4-slew .   CS at state 2, need to back figure the offset, state 4 use &telescope
+  if( match( "CS" ) || match( "CM" )){
+    Serial.write(' '); Serial.print(CS);  Serial.write(' ');
+      if( CS == 2 ) add_sync( &target2 );
+      if( CS == 4 ) add_point(&telescope);  // CS == 3 would be goto was directly on target, should we change anything?
+      CS = 0;
+  }
+  if( match( "CM" )) reply_command((char*)"N/A#");                   // is this used? or just CS
+  if( match( "A+" )) add_point(&telescope), success(), A1=2;         // add 1st and only align point, rest will be sync here
   
 }
 
@@ -157,7 +192,6 @@ char *p;
 // goto - fill out tstar info, call calc_ext_object( &target2 ), call que_goto( &target2 )
    //   dec = to_degrees_dec( tstar.dd, tstar.dm, tstar.ds );
    //   ra  = to_degrees_ha( tstar.hr, tstar.mn, tstar.sc );
-
 void Sr(){
 
   tstar.hr = arg1();  tstar.mn = arg2(':');  tstar.sc = arg3(':');
@@ -172,17 +206,17 @@ void Sd(){
 
 void ext_goto(){
 
-   calc_ext_object( &target2 );    // !!! can test limits now, overhead and horizon - 1toohigh# 1toolow#
+   calc_ext_object( &target2 );    // in pointing.h , can test limits now, overhead and horizon - 2toohigh# 1toolow#
    if( target2.ALT > overhead_limit ){
-      reply_command((char *)"1TooHigh#");
+      reply_command((char *)"2TooHigh#");
       return;
    }
    if( target2.ALT < horizon_limit ){
       reply_command((char *)"1TooLow#");
       return;
    }
-   que_goto( &target2 );
-   failure();             // return 0 if ok
+   que_goto( &target2 );  // in PicoStep
+   failure();             // return 0 if ok, failure is success in this case.
 }
 
 void success(){
@@ -352,7 +386,7 @@ char reply[40];
       int i = 0;
       if (tracking == POWER_FAIL || tracking == HOME || tracking == OFF || tracking ==  RSET ) 
                                                reply[i++]='n';                     // [n]ot tracking
-      if (!(finding || ext_finding))           reply[i++]='N';                     // [N]o goto
+      if (!(/*finding ||*/ ext_finding))           reply[i++]='N';                     // [N]o goto, using finding disables quit slew
       if ( 1 )                                 reply[i++]='p';                     // Not [p]arked
       //if (park.state == PS_PARKING)            reply[i++]='I'; else                // Parking [I]n-progress
       //if (park.state == PS_PARKED)             reply[i++]='P'; else                // [P]arked
@@ -496,8 +530,8 @@ char * tostring2( int val ){
 static char str[5];
 
    val = constrain( val, 0, 99 );
-   if( val < 10 ) str[0] = '0';
-   else str[0] = val/10 + '0';
+   //if( val < 10 ) str[0] = '0'; else
+   str[0] = val/10 + '0';
    val = val % 10;
    str[1] = val + '0';
    str[2] = 0;

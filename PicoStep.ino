@@ -1,4 +1,4 @@
-//  Pi Pico telescope goto and clock drive
+//  Pi Pico telescope goto and clock drive.   GEM, FORK, ALTAZ, ALTALT mounts.
 
 
 // Notes:
@@ -70,12 +70,18 @@ uint32_t vtest_count;                // test 12 volt power, turn all off if fall
 uint32_t sidereal_count;             // update sidereal time and display
 uint32_t finding_count;
 uint32_t limit_count;
+uint32_t slew_control_count;
 
 int slew_rate = 100;
 uint8_t power_fail;                  // latched error condition
 uint8_t track_selection = RSET;
 uint8_t tracking = RSET;
 
+uint32_t slew_time;              // external slew commands
+int  slew_north;
+int  slew_south;
+int  slew_east;
+int  slew_west;
 
 #define U_POINT 0                // telescope pointing display, select tracking mode
 #define U_GOTO  1                // select a database object with encoder and goto on long press
@@ -84,8 +90,7 @@ uint8_t tracking = RSET;
 #define U_TIME  4                // set UTC time, DTAP to enter from U_POINT
 int8_t u_mode = U_POINT;         // user interface mode1
 
-//int new_target, old_target=400;      // testing vars currently
-int meridian_star;               // database star/object crossing meridian
+int meridian_star;               // database star/object crossing meridian, start position of object search
 int target_star;
 
 // speeds
@@ -97,6 +102,7 @@ float HAspeed, RAspeed, DCspeed, DECspeed;
 
 #include "Pointing.h"            // more program code
 #include "Encoder.h"
+#include "Sync.h"
 #include "command.h"
 
 
@@ -162,9 +168,8 @@ void setup() {
   display_stars2( meridian_star );
   calc_SBO_object( meridian_star, &SBO_object );
   display_pointing( &SBO_object );
-//new_target = meridian_star;               // !!! just for testing, does a goto
    
-  limit_count = finding_count = vtest_count = sidereal_count = millis();
+  slew_control_count = limit_count = finding_count = vtest_count = sidereal_count = millis();
 
 }
 
@@ -247,6 +252,8 @@ int8_t t2;
       limit_count = t;
       check_limits();
    }
+
+   if( t - slew_control_count >= 333 ) slew_control_count = t, slew_control();
  
    t2 = encoder();
    if( t2 ) menu( (int)t2 );
@@ -267,15 +274,6 @@ int8_t t2;
 }
 
 
-
-// status display, tracking mode
-//#define POWER_FAIL 0
-//#define HOME 1
-//#define OFF  2
-//#define STAR 3 
-//#define SUN  4
-//#define MOON 5 
-// RSET 6      
 void menu( int v ){
 int dist;
   
@@ -325,6 +323,27 @@ int dist;
   }
 }
 
+void slew_control(){              // external slewing commands
+int dist_ra, dist_dec;
+
+   if( millis() - slew_time > 10000 ) slew_north = slew_south = slew_east = slew_west = 0;
+   if( slew_north + slew_south + slew_east + slew_west == 0 ) return;
+
+   noInterrupts();
+   dist_dec = 100*slew_north - 100*slew_south;
+   if( mount_type == GEM && telescope.side == SIDE_WEST ) dist_dec = -dist_dec;
+   dist_ra =  100*slew_west - 100*slew_east;
+   telescope.DECoffset += dist_dec;
+   telescope.RAoffset += dist_ra;
+   DECstep.move(dist_dec + DECstep.distanceToGo());
+   RAstep.move( dist_ra + RAstep.distanceToGo());
+   HAstep.move( 0 );
+   DCstep.move( 0 );
+   finding = 1;
+   interrupts();
+  
+}
+
 void LCD_clear_rows( uint8_t s, uint8_t e ){
 int i;
 
@@ -360,8 +379,11 @@ void menu_action( int8_t sw ){          // act on switch press
           LCD.printNumI( slew_rate, RIGHT, ROW7, 4, ' ' );
        break;
        case U_DEC:      // sync here
+          add_point( &telescope );
+          u_mode = U_POINT;          // go somewhere else, done slewing, on target.
+          LCD_clear_rows( 2, 7 );
        break;
-       case U_TIME:
+       case U_TIME:    // !!! remove, setting time with the phone app. Or could just adjust the seconds.
        break;
      }
   }
