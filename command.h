@@ -1,10 +1,13 @@
 
 // onstep command and response
 
-#define CMD_DEBUG 1                   // echo 
 
-void process_command();
+#define CMD_DEBUG 0                  // echo on serial
+#define REV_DEBUG 1                  // echo on serial1
+
+void process_command( uint8_t check_flag );
 void reply_command( char st[] );
+void reply_frame( char msg[] );
 void command_in0( char c );
 void command_in1( char c );
 void get_RA();
@@ -28,27 +31,38 @@ void set_date();
 void set_time();
 void sidereal_time();
 void make_time_string( int hr, int mn, int sec );
+void float2sdd( float val );
+void get_date();
+void get_time();
+void fail_silently();
 
 /**************************************************************************/
 
 char command[44];
 int serial_interface;
+char sequence;
 
 void command_in1( char c ){
 static int in;
 static char cmd[44];
+static uint8_t use_check;
 
    if( CMD_DEBUG ) Serial.write(c);
 
-   if( c == ':' ){   // can also have in the input string, not just the start character
-      if( in == 0 )  return;    // strip leading :
+   if( c == ':' && in == 0 ){   // can also have in the input string, not just the start character
+      use_check = 0;
+      return;                   // strip leading :
+   }
+   if( c == ';' && in == 0 ){
+      use_check = 1;
+      return;
    }
 
    if( c == '#' ){
       cmd[in] = 0;
       strcpy( command, cmd );
       serial_interface = 1;
-      process_command();
+      process_command( use_check );
       in = 0;
       return;
    }
@@ -63,17 +77,40 @@ static char cmd[44];
 void command_in0( char c ){
 static int in;
 static char cmd[44];
+static int special;
+static uint8_t use_check;
 
-   if( c == ':' ){   // can also have in the input string, not just the start character
-      if( in == 0 )  return;    // strip leading :
+   if( REV_DEBUG ) if( isprint(c) ) Serial1.write(c);
+   
+   // special <ACK>
+   if( c == 6 ){
+      special = 1;
+      return;
+   }
+   if( special ){
+      serial_interface = 0;
+      if( c == 0 ) reply_frame(( char *) "0CK_FAIL" );
+      else{
+         cmd[0] = c;   cmd[1] = '#';  cmd[2] = 0;  reply_command( cmd );
+      }
+      in = 0;  special = 0;
    }
 
+
+   if( c == ':' && in == 0 ){   // can also have in the input string, not just the start character
+      use_check = 0;
+      return;                   // strip leading :
+   }
+   if( c == ';' && in == 0 ){
+      use_check = 1;
+      return;
+   }
 
    if( c == '#' ){
       cmd[in] = 0;
       strcpy( command, cmd );
       serial_interface = 0;
-      process_command();
+      process_command( use_check );
       in = 0;
       return;
    }
@@ -87,46 +124,73 @@ static char cmd[44];
 
 
 
-void process_command(){
+void process_command( uint8_t check_flag ){
 static uint8_t A1;
 static uint8_t CS;
+char temp[33];
+
+  //pre-process checksum sequence
+  if( check_flag ){
+     int a = strlen( command );
+     if( a < 4 ) return;             // short string, send an error?
+     sequence = command[a - 1];
+     // verify checksum here...
+     command[ a - 3 ] = 0;           // chop checksum and sequence
+  }
+  else sequence = 0;                 // doubles as flag for adding checksum to response
+  
 
   if( match( "GU" )) get_status();
-  if( match( "GVN" )) reply_command((char *)"3.16o#");
-  if( match( "GR" )) get_RA();
-  if( match( "GD" )) get_DEC();
+  if( match( "GVN" )) reply_frame((char *)"3.16o");      //10.16a");
+  if( match( "GVP" )) reply_frame((char *)"On-Step");
+  if( match( "GVD" )) reply_frame((char *)"04 01 24");
+  if( match( "GVT" )) reply_frame((char *)"10:20:30");
+  if( match( "GR") || match("GRa") || match("GRH") ) get_RA();
+  if( match( "GD") || match("GDe") || match("GDH") ) get_DEC();
   if( match( "GT" )){
-     if( tracking == STAR ) reply_command((char *)"01.00274#");      // zero unless STAR !!!
-     else if( tracking == MOON ) reply_command((char *)"00.97900#");  
-     else if( tracking == SUN ) reply_command((char *)"01.00000#");
-     //else reply_command((char *)"00.00000#");
-     else reply_command((char *)"0#");
+     if( tracking == STAR ) reply_frame((char *)"01.00274");
+     else if( tracking == MOON ) reply_frame((char *)"00.97900");  
+     else if( tracking == SUN ) reply_frame((char *)"01.00000");
+     //else reply_frame((char *)"00.00000");
+     else reply_frame((char *)"0");
   }
-  if( match( "GZ" )) get_AZ();
-  if( match( "GA" )) get_ALT();
-  if( match( "GX9A" )) unknown();
+  if( match( "GZ" ) || match("GZH") ) get_AZ();
+  if( match( "GA" ) || match("GAH") ) get_ALT();
+  if( match( "GX9A" )) unknown();                    // wx?
   if( match( "GX9B" )) unknown();
   if( match( "GX9C" )) unknown();
   if( match( "GX9E" )) unknown();
-  if( match( "GXEE" )) reply_command((char *)"0#");
+  if( match( "GXEE")) reply_frame((char *)"1" );   // #axis-1 i think, GXEE with checksum and sequence letter 131B
+  if( match( "GXE6")) reply_frame((char *)"15.000001");   // steps per sidereal second, PEC commands, format convert.cpp sprintF
+  //if( match( "GXE6" )) fail_silently();                 // 3600/240
+  if( match( "GX98" )) reply_frame((char *)"N");      // GX98 rotator - none
+  if( match( "GXE9" )) reply_frame((char *)"4" );     // past meridian east, limits commands
+  if( match( "GXEA" )) reply_frame((char *)"4" );     // past meridian west in minutes, 4 is 1 deg
+  if( match("GX92") || match("GX93")) reply_frame((char *)"250");   // us per step? !!! teensy says...81.28?
+  if( match("FA")) failure();                         // focus present no
   if( match( "Gt" )) get_latitude(),CS = 1;
   if( match( "Gg" )) get_longitude(), CS = 2;
-  if( match( "GG" ) ) reply_command((char *)"+00#");     // we use UTC time rather than local
+  if( match( "GG" ) ) reply_frame((char *)"+00");     // we use UTC time rather than local
   if( match( "GS" )) sidereal_time();
   if( match( "Gm" )){
-       if( telescope.side == SIDE_EAST ) reply_command((char *)"E#");
-       else if( telescope.side == SIDE_WEST ) reply_command((char *)"W#");
-       else reply_command((char *)"N#");
+       if( telescope.side == SIDE_EAST ) reply_frame((char *)"E");
+       else if( telescope.side == SIDE_WEST ) reply_frame((char *)"W");
+       else reply_frame((char *)"N");
   }
+  if( match( "Gh" )) float2sdd( horizon_limit );    // these seem to be scaled
+  if( match( "Go" )) float2sdd( overhead_limit );
+  if( match( "GC" )) get_date();
+  if( match( "GL" )) get_time();
+  
      // reply[0] = '0' + ALIGN_MAX_NUM_STARS;
      // reply[1] = '0' + alignState.currentStar;
      // reply[2] = '0' + alignState.lastStar;
      // reply[3] = 0;
   if( match( "A1" )) A1 = 1, success();
   if( match( "A?" )){
-    if( A1 == 1 ) reply_command( (char *)"411#");
-    else if( A1 == 2 ) reply_command((char *)"421#");
-    else reply_command( (char *)"401#");   // alignment status under goto, stars progress ? 401 to 411?
+    if( A1 == 1 ) reply_frame( (char *)"411");
+    else if( A1 == 2 ) reply_frame((char *)"421");
+    else reply_frame( (char *)"401");   // alignment status under goto, stars progress ? 401 to 411?
   }
   if( matchn( "Sr", 2 )) Sr();    //  goto RA 
   if( matchn( "Sd", 2 )) Sd();    //  goto DEC
@@ -146,18 +210,31 @@ static uint8_t CS;
   if( match( "Qw" )) slew_west = 0, CS = 4;  
   if( match( "Qn" )) slew_north = 0, CS = 4;  
   if( match( "Qs" )) slew_south = 0, CS = 4;
+  if( match( "Q" )) slew_east = slew_west = slew_north = slew_south = 0, CS = 4;
   if( match( "hC" )) go_home();  // go home
   if( match( "hF" )) at_home();  // at home
   // var state CS 0-?, 1-got RA, 2-got DEC, 3-goto, 4-slew .   CS at state 2, need to back figure the offset, state 4 use &telescope
   if( match( "CS" ) || match( "CM" )){
-    Serial.write(' '); Serial.print(CS);  Serial.write(' ');
       if( CS == 2 ) add_sync( &target2 );
       if( CS == 4 ) add_point(&telescope);  // CS == 3 would be goto was directly on target, should we change anything?
       CS = 0;
+      if( match( "CM" )) reply_frame((char*)"N/A");                   // is this used? or just CS    
   }
-  if( match( "CM" )) reply_command((char*)"N/A#");                   // is this used? or just CS
   if( match( "A+" )) add_point(&telescope), success(), A1=2;         // add 1st and only align point, rest will be sync here
+  if( match( "%BR" ) || match("%BD") ) reply_frame((char *) "0" );   // no backlash
+  if( matchn( "SG",2 )) success();                                   // ignore setting time offset, we know what it is - zero.
+  if( matchn( "$B",2 )) success();                                   // ignore setting backlash
+  if( matchn( "Sh",2 )) success();                                   // ignore set horizon limit
+  if( matchn( "So",2 )) success();                                   // ignore set overhead limit
+  if( matchn( "SXE9",4 )) success();                                 // ignore past meridian set
+  if( matchn( "SXEA",4 )) success();
   
+}
+
+
+void fail_silently(){
+
+   if( sequence ) reply_frame((char *)"0");    // send empty string for frame, else do nothing
 }
 
 int arg1(){
@@ -208,11 +285,11 @@ void ext_goto(){
 
    calc_ext_object( &target2 );    // in pointing.h , can test limits now, overhead and horizon - 2toohigh# 1toolow#
    if( target2.ALT > overhead_limit ){
-      reply_command((char *)"2TooHigh#");
+      reply_frame((char *)"2TooHigh");
       return;
    }
    if( target2.ALT < horizon_limit ){
-      reply_command((char *)"1TooLow#");
+      reply_frame((char *)"1TooLow");
       return;
    }
    que_goto( &target2 );  // in PicoStep
@@ -220,10 +297,14 @@ void ext_goto(){
 }
 
 void success(){
-  reply_command((char *)"1");
+
+  if( sequence ) reply_frame((char *)"1");
+  else reply_command((char *)"1");
 }
 void failure(){
-  reply_command((char *)"0");
+
+  if( sequence ) reply_frame((char *)"0");
+  else reply_command((char *)"0");
 }
 
 void get_longitude(){  // sDDD*MM#     sign reversed, east negative 
@@ -248,8 +329,8 @@ char s;
    strcat( rsp, tostring2( d ) );
    strcat( rsp, "*" );
    strcat( rsp, tostring2( m ) );
-   strcat( rsp, "#" );
-   reply_command(rsp);
+   //strcat( rsp, "#" );
+   reply_frame(rsp);
 }
 
 void get_latitude(){   //  sDD*MM#
@@ -269,13 +350,13 @@ char rsp[15];
    strcat( rsp, tostring2( d ) );
    strcat( rsp, "*" );
    strcat( rsp, tostring2( m ) );
-   strcat( rsp, "#" );
-   reply_command( rsp );
+   //strcat( rsp, "#" );
+   reply_frame( rsp );
 
 }
 
 void unknown(){
-  reply_command( (char *)"020.0#");     // wx info
+  reply_frame( (char *)"020.0");     // wx info
 }
 
 void get_AZ(){    //DDD*MM'SS# 
@@ -298,8 +379,8 @@ char rsp[15];
    strcat( rsp, tostring2( m ) );
    strcat( rsp,"'" );
    strcat( rsp, tostring2( s ) );
-   strcat( rsp,"#" );
-   reply_command( rsp );
+   //strcat( rsp,"#" );
+   reply_frame( rsp );
 
 }
 
@@ -324,8 +405,8 @@ char sn;
   strcat( rsp, tostring2( dec_min) );
   strcat( rsp, "'" );
   strcat( rsp, tostring2( dec_sec ) );
-  strcat( rsp, "#" );
-  reply_command( rsp );
+  //strcat( rsp, "#" );
+  reply_frame( rsp );
 
 }
 
@@ -350,8 +431,8 @@ char sn;
   strcat( rsp, tostring2( dec_min) );
   strcat( rsp, "'" );
   strcat( rsp, tostring2( dec_sec ) );
-  strcat( rsp, "#" );
-  reply_command( rsp );
+  //strcat( rsp, "#" );
+  reply_frame( rsp );
 
 }
 
@@ -380,7 +461,7 @@ float sid,ra;  //ha,dec;
 void get_status(){
 char reply[40];
 
- //reply_command((char *)"NHp#");
+ //reply_frame((char *)"NHp#");
  //return;
  
       int i = 0;
@@ -437,10 +518,10 @@ char reply[40];
       //reply[i++]='0' + limits.errorCode();                                         // Provide general error code
       reply[i++] = '0';
       
-      reply[i++] = '#';
+      //reply[i++] = '#';
       reply[i++]=0;
 
-      reply_command( reply );
+      reply_frame( reply );
 }
 
 void set_date(){      // :SC03/16/24#   RTC
@@ -450,14 +531,13 @@ int m2,d2,y2;
   today = RTClib::now();
   m = today.month();   d = today.day();  y = today.year();
   y -= 2000;
- //Serial.print( m );  Serial.print( d ); Serial.print( y ); Serial.write(' ');
   m2 = arg1();
   d2 = arg2( '/' );
   y2 = arg3( '/' );
- //Serial.print( m2 );  Serial.print( d2 ); Serial.print( y2 ); Serial.println();
-  if( m != m2 ) RTC.setMonth( m2 );
-  if( d != d2 ) RTC.setDate( d2 );
-  if( y != y2 ) RTC.setYear( y2 );
+
+ //if( m != m2 ) RTC.setMonth( m2 );   // RTC keeps time and date, uncomment for battery change or 1st use of RTC 
+ // if( d != d2 ) RTC.setDate( d2 );
+ // if( y != y2 ) RTC.setYear( y2 ); 
 
   success();
 }
@@ -466,14 +546,15 @@ void set_time(){     //:SL23:51:01#
 int h,m,s;
 int h2, m2, s2;
 
+
    today = RTClib::now();
    h = today.hour();   m = today.minute();  s = today.second();
    h2 = arg1();
    m2 = arg2(':');
    s2 = arg3(':');
-   if( h != h2 ) RTC.setHour( h2 );
-   if( m != m2 ) RTC.setMinute( m2 );
-   if( s != s2 ) RTC.setSecond( s2 );
+  // if( h != h2 ) RTC.setHour( h2 );        // avoid changing RTC to avoid bogus data, uncomment for 1st use
+  // if( m != m2 ) RTC.setMinute( m2 );
+   if( s != s2 ) RTC.setSecond( s2 );        // allow seconds correction
    
    success();
 }
@@ -487,9 +568,9 @@ char tm[15];
    strcat( tm, tostring2( mn ));
    strcat( tm, ":" );
    strcat( tm, tostring2( sec ));
-   strcat( tm, "#" );
+   //strcat( tm, "#" );
   
-   reply_command( tm );  
+   reply_frame( tm );  
 }
 
 void sidereal_time(){      //:GS#  Returns: HH:MM:SS#
@@ -506,7 +587,35 @@ void reply_command( char st[] ){
           Serial.println( st );
       }
    }
-   else Serial.print( st );   
+   else{
+      Serial.print( st );   
+      if( REV_DEBUG ){ 
+          Serial1.print( "   " );              // echo for debug
+          Serial1.println( st );
+      }
+   }
+}
+
+
+void reply_frame( char msg[] ){
+char st[44];
+char ck[33];
+uint8_t check;
+int i;
+char *p;
+
+  strcpy( st, msg );
+  if( sequence ){      // add checksum
+     check = 0;  p = msg;
+     while( *p ) check += *p++;
+     itoa( check, ck, 16 );
+     if( check < 16 ) strcat( st, "0" );
+     strcat( st, ck );
+     strncat(st, &sequence, 1);
+  }
+
+  strcat( st, "#" );
+  reply_command( st );
 }
 
 int match( const char st[] ){
@@ -536,4 +645,40 @@ static char str[5];
    str[1] = val + '0';
    str[2] = 0;
    return str;
+}
+
+
+void float2sdd( float val ){
+char str[11];
+
+   if( val < 0.0 ) str[0] = '-', val = -val;
+   else str[0] = '+';
+   str[1] = 0;
+   strcat( str, tostring2( (int)val ));
+   strcat( str, "0" );                   // values wrong, maybe it is sddd format?
+   reply_frame( str );
+}
+
+// MM/DD/YY#
+void get_date(){
+int m,d,y;
+char dt[15];
+
+    today = RTClib::now();
+    m = today.month();   d = today.day();  y = today.year(); y -= 2000;
+    // make date string
+   strcpy( dt, tostring2( m ));
+   strcat( dt, "/" );
+   strcat( dt, tostring2( d ));
+   strcat( dt, "/" );
+   strcat( dt, tostring2( y ));
+   reply_frame( dt );  
+}
+
+void get_time(){
+int h,m,s;
+
+     today = RTClib::now();
+     h = today.hour();   m = today.minute();  s = today.second();
+     make_time_string( h, m, s );
 }

@@ -1,6 +1,6 @@
 
 // Telescope pointing model for 4 or 5 scopes
-//   dummy scope where one second of HA is one step of the dummy motor
+//   dummy scope where one second of HA is one step of the dummy motor( 15 steps now I think )
 //   Fork mount - same as the dummy unless want to alter under pole behavior
 //   GEM
 //   Alt Az

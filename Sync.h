@@ -75,7 +75,7 @@ float mn;
    sync[k].ra_off = p->RAoffset;
    sync[k].dc_off = p->DECoffset;
 
-   print_all();    // !!! debug
+   //print_all();    // !!! debug
 }
 
 

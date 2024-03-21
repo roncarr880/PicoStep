@@ -502,6 +502,7 @@ static uint32_t tm;
 float more_ha;
 static float save_ha, save_dec;
 float dest2;
+float dist;
 
    if( state == 0 && p == 0 ) return;     // idle state
    
@@ -525,6 +526,8 @@ float dest2;
         save_ha = p2->HA; save_dec = p2->DEC_;
         p2->DEC_ = telescope.DEC_;
         p2->HA = ( telescope.side == SIDE_EAST ) ? 30.0 : -30.0 ;   // move mount away from the tripod, dec stays the same
+        dist = p2->DEC_ - telescope.DEC_;  if( dist < 0.0 ) dist = -dist;
+        if( dist < 5.0 ) p2->HA = ( telescope.side == SIDE_EAST ) ? 5.0 : -5.0 ;
         goto_target( p2 ), ++state;
       break;
       case 4:

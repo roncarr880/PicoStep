@@ -69,7 +69,7 @@ float my_latitude  = 44.447;
 //float my_latitude = 30.0;
 
 // limits
-float horizon_limit = -1.0;
+float horizon_limit =  1.0;
 float overhead_limit = 80.0;           // less < 90 for scope that interfers with tripod legs
 float ha_east_limit = -100.0;          // -90 keeps scope on top
 float ha_west_limit = 100.0;           // more than 90 allows under pole for GEM
