@@ -288,6 +288,7 @@ int dec_deg, dec_min;
 float sid,ra,ha,dec;
 char sn = ' ';
 static int holdoff;      // display meridian star longer than 5 seconds
+char ef[6];              // display goto in progress
 
   if( u_mode >= U_RA ){
       //holdoff = 1;       // recover screen display quicker after mode change !!! didn't work, no calls to here unless proper mode
@@ -303,10 +304,12 @@ static int holdoff;      // display meridian star longer than 5 seconds
      else if( p == &telescope ) return;
   }
 
+  if( ext_finding ) strcpy( ef, "G" ); else strcpy( ef, " " );
   if( p == &telescope && mount_type == GEM ){
-    if( telescope.side == SIDE_EAST ) LCD.print((char *)"E",LEFT,ROW2 ), LCD.print((char *)" ",RIGHT,ROW2);
-    else LCD.print((char *)"W",RIGHT,ROW2) , LCD.print((char *)" ",LEFT,ROW2 );
+    if( telescope.side == SIDE_EAST ) LCD.print((char *)"E",LEFT,ROW2 ), LCD.print(ef,RIGHT,ROW2);
+    else LCD.print((char *)"W",RIGHT,ROW2) , LCD.print(ef,LEFT,ROW2 );
   }
+  else LCD.print(ef,RIGHT,ROW2);
 
 
   sid = to_degrees_ha( sid_hr, sid_mn, sid_sec );

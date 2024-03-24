@@ -71,6 +71,7 @@ uint32_t sidereal_count;             // update sidereal time and display
 uint32_t finding_count;
 uint32_t limit_count;
 uint32_t slew_control_count;
+uint32_t command_throttle;
 
 int slew_rate = 100;
 uint8_t power_fail;                  // latched error condition
@@ -261,11 +262,12 @@ int8_t t2;
    if( t2 >= TAP ) menu_action(t2), sstate[0] = DONE;
 
 
-   while( Serial1.available() ){
-      char ch = Serial1.read();
+   if( Serial1.available() ){            // if or while or throttle, encoder and switches becomming unresponsive
+      char ch = Serial1.read();          // at 9600 baud which should slow it down
       command_in1( ch );
    }
-   while( Serial.available() ){
+   if( command_throttle ) --command_throttle;
+   else if( Serial.available() ){             // throttle this one
      char ch = Serial.read();
      command_in0( ch );
    }
@@ -524,11 +526,14 @@ float dist;
       break;
       case 3:
         save_ha = p2->HA; save_dec = p2->DEC_;
+        dist = p2->DEC_ - telescope.DEC_;   dist = fabs(dist);
         p2->DEC_ = telescope.DEC_;
         p2->HA = ( telescope.side == SIDE_EAST ) ? 30.0 : -30.0 ;   // move mount away from the tripod, dec stays the same
-        dist = p2->DEC_ - telescope.DEC_;  if( dist < 0.0 ) dist = -dist;
-        if( dist < 5.0 ) p2->HA = ( telescope.side == SIDE_EAST ) ? 5.0 : -5.0 ;
-        goto_target( p2 ), ++state;
+        if( dist > 5.0 && fabs(telescope.HA) < 30.0 ){              // skip this step if just a fine adjustment move
+          goto_target( p2 );
+          ++state;
+        }
+        else p2->HA = telescope.HA, state = 5;
       break;
       case 4:
         if( finding == 0 ) ++state;

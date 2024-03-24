@@ -1,40 +1,42 @@
 
 // onstep command and response
+// !!! ALT AZ not displaying in Sharpcap, works in phone app
 
 
 #define CMD_DEBUG 0                  // echo on serial
 #define REV_DEBUG 1                  // echo on serial1
 
 void process_command( uint8_t check_flag );
-void reply_command( char st[] );
-void reply_frame( char msg[] );
-void command_in0( char c );
-void command_in1( char c );
+void reply_command( char st[] );               // commands in form :GA#
+void reply_frame( char msg[] );                // commands in form ;GA2CV#  - checksum,sequence
+void command_in0( char c );                    // Serial
+void command_in1( char c );                    // Serial1
 void get_RA();
-void get_DEC();
-char* tostring2( int val );
+//void get_DEC();
+//void get_ALT();
+void get_DEC_ALT( float dec );
+char* tostring2( int val );                    // 2 characters with leading zero if needed
 int match( const char st[] );
 int matchn( const char st[], int n );
 void get_AZ();
-void get_ALT();
-void unknown();
+void unknown();                                 // wx !!! we should figure out what we should actually send
 void get_latitude();
 void get_longitude();
 void get_status();
-void success();
-void failure();
-void Sr();
-void Sd();
-void ext_goto();
+void success();                                 // 1
+void failure();                                 // 0
+void Sr();                                      // set goto RA value
+void Sd();                                      // set toto DEC_ value
+void ext_goto();                                // target2 goto
 extern void que_goto( struct POINTING *p );
-void set_date();
-void set_time();
-void sidereal_time();
-void make_time_string( int hr, int mn, int sec );
-void float2sdd( float val );
+void set_date();                                // code written but disabled, writes RTC, only needed one time
+void set_time();                                // code written but only sets seconds
+void sidereal_time();                           // refreshed interval is 5 seconds, do we need better?
+void make_time_string( int hr, int mn, int sec );  
+void float2sdd( float val );                    // tostring2 with sign for float type, used for limits, needed to *10, maybe it's sddd 
 void get_date();
 void get_time();
-void fail_silently();
+void fail_silently();                           // perhaps invalid, thought we saw this on OnstepX but was mistaken
 
 /**************************************************************************/
 
@@ -146,16 +148,16 @@ char temp[33];
   if( match( "GVD" )) reply_frame((char *)"04 01 24");
   if( match( "GVT" )) reply_frame((char *)"10:20:30");
   if( match( "GR") || match("GRa") || match("GRH") ) get_RA();
-  if( match( "GD") || match("GDe") || match("GDH") ) get_DEC();
+  if( match( "GD") || match("GDe") || match("GDH") ) get_DEC_ALT( telescope.DEC_ );
   if( match( "GT" )){
      if( tracking == STAR ) reply_frame((char *)"01.00274");
      else if( tracking == MOON ) reply_frame((char *)"00.97900");  
      else if( tracking == SUN ) reply_frame((char *)"01.00000");
-     //else reply_frame((char *)"00.00000");
+     //else reply_frame((char *)"00.00000");      // !!! which is correct?
      else reply_frame((char *)"0");
   }
   if( match( "GZ" ) || match("GZH") ) get_AZ();
-  if( match( "GA" ) || match("GAH") ) get_ALT();
+  if( match( "GA" ) || match("GAH") ) get_DEC_ALT( telescope.ALT );
   if( match( "GX9A" )) unknown();                    // wx?
   if( match( "GX9B" )) unknown();
   if( match( "GX9C" )) unknown();
@@ -170,7 +172,7 @@ char temp[33];
   if( match("FA")) failure();                         // focus present no
   if( match( "Gt" )) get_latitude(),CS = 1;
   if( match( "Gg" )) get_longitude(), CS = 2;
-  if( match( "GG" ) ) reply_frame((char *)"+00");     // we use UTC time rather than local
+  if( match( "GG" ) ) reply_frame((char *)"+00");     // local time offset, we use UTC time rather than local
   if( match( "GS" )) sidereal_time();
   if( match( "Gm" )){
        if( telescope.side == SIDE_EAST ) reply_frame((char *)"E");
@@ -181,6 +183,9 @@ char temp[33];
   if( match( "Go" )) float2sdd( overhead_limit );
   if( match( "GC" )) get_date();
   if( match( "GL" )) get_time();
+  if( match( "GXF3") || match("GXF4") ) reply_frame( (char *)"0.000001");  // axis speed
+  if( match( "GXFA")) reply_frame( (char *)"50");                           // workload faked in mount_command also
+  if( match( "GX96")) reply_frame( (char *)"E");                            // prefered side
   
      // reply[0] = '0' + ALIGN_MAX_NUM_STARS;
      // reply[1] = '0' + alignState.currentStar;
@@ -384,6 +389,7 @@ char rsp[15];
 
 }
 
+/*
 void get_ALT(){     // Reply: sDD*MM'SS#    // !!! same as dec
 char rsp[15];
 float dec;
@@ -409,15 +415,16 @@ char sn;
   reply_frame( rsp );
 
 }
+*/
 
-void get_DEC(){     // sDD*MM'SS#
+void get_DEC_ALT( float dec ){     // sDD*MM'SS#
 char rsp[15];
-float dec;
+//float dec;
 int dec_deg, dec_min, dec_sec;
 char sn;
 
   sn = '+';
-  dec = telescope.DEC_;
+  //dec = telescope.DEC_;
   if( dec < 0 ) sn = '-', dec = -dec;
   dec_deg = dec;
   dec -= dec_deg;
@@ -593,6 +600,7 @@ void reply_command( char st[] ){
           Serial1.print( "   " );              // echo for debug
           Serial1.println( st );
       }
+      command_throttle = 10000;
    }
 }
 
@@ -639,7 +647,6 @@ char * tostring2( int val ){
 static char str[5];
 
    val = constrain( val, 0, 99 );
-   //if( val < 10 ) str[0] = '0'; else
    str[0] = val/10 + '0';
    val = val % 10;
    str[1] = val + '0';
