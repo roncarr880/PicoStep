@@ -239,6 +239,7 @@ float sps;
 void goto_target( struct POINTING *p2 ){
 long ha,ra,dc,dec;
 
+
 //  mount specific for alt az, GEM, alt alt
    ha = p2->HA * (float)HA_STEPS_PER_DEGREE;
    dc = p2->DEC_ * (float)DC_STEPS_PER_DEGREE;

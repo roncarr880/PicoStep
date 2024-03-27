@@ -4,7 +4,7 @@
 
 
 #define CMD_DEBUG 0                  // echo on serial
-#define REV_DEBUG 1                  // echo on serial1
+#define REV_DEBUG 0                  // echo on serial1
 
 void process_command( uint8_t check_flag );
 void reply_command( char st[] );               // commands in form :GA#

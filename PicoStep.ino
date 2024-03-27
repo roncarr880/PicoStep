@@ -460,11 +460,12 @@ float dest;
             ( (telescope.side == SIDE_EAST && telescope.HA < 30.0) || \
             (telescope.side == SIDE_WEST && telescope.HA > -30.0) ) ){
              dest = ( telescope.side == SIDE_EAST ) ? 30.0 : -30.0 ;
+             float dest2 = dest * (float)HA_STEPS_PER_DEGREE;
              dest *=  (float)RA_STEPS_PER_DEGREE;
              dest += telescope.side * 90.0 * (float)RA_STEPS_PER_DEGREE;
              noInterrupts();
              RAstep.moveTo( dest );
-             HAstep.move( 0 );
+             HAstep.moveTo( dest2 );
              DCstep.move( 0 );
              DECstep.move( 0 );
              finding = 1;
@@ -474,7 +475,7 @@ float dest;
           else state = 3;   
        break;
        case 2:
-         if( finding == 0 ) ++state;    // Serial.print("Here...");         // !!! remove the serial print
+         if( finding == 0 ) ++state;    // Serial.print("Here...");
        break;     
        case 3:
          go_home_GEM();   // in pointing.h
@@ -516,6 +517,7 @@ float dist;
           tm = millis();
           gem_ignore_limits = 1;
           ext_finding = 1;
+          if( power_fail == 0 && over_limit == 0 ) digitalWrite( DRV_ENABLE, LOW );  // enable
         }
       break;
       case 1:
@@ -597,7 +599,7 @@ static struct POINTING *p2;
 static uint32_t tm;
 float more_ha;
 
-
+   
    if( mount_type == GEM ){              // separate function for GEM
       gem_que_goto( p );
       return;                                       
@@ -614,6 +616,7 @@ float more_ha;
           p2 = p;
           tm = millis();
           ext_finding = 1;
+          if( power_fail == 0 && over_limit == 0 ) digitalWrite( DRV_ENABLE, LOW );  // enable
         }
       break;
       case 1:              // meridian flip needed?

@@ -56,12 +56,16 @@ uint8_t mount_type = GEM;
 #define SIDE_WEST  1.0
 
 // constants
-#define RAreverse 0
-#define DECreverse 0
+#define RAreverse 1
+#define DECreverse 1
 #define HA_STEPS_PER_DEGREE 3600L       // 3600  dummy stepper 1 sec of resolution
-#define DC_STEPS_PER_DEGREE 1000L       // !!! 3600 just using 1000 to read angle from step count
-#define DEC_STEPS_PER_DEGREE 1000L      // !!! made up numbers for now
-#define RA_STEPS_PER_DEGREE 1000L      // steps * micro steps * gearing / 360
+#define DC_STEPS_PER_DEGREE 1800L       // 3600 is slower than 6144/4
+//#define DEC_STEPS_PER_DEGREE 1000L      // !!! made up numbers for now
+//#define RA_STEPS_PER_DEGREE 1000L      // steps * micro steps * gearing / 360
+#define DEC_STEPS_PER_DEGREE 6144L/4L      //  My GEM, and 16 vs 64 microsteps
+#define RA_STEPS_PER_DEGREE 12288L/4L
+
+
 
 // location
 float my_longitude = -69.524125;
